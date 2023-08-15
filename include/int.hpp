@@ -33,26 +33,6 @@ namespace lrf
     // ===END TYPEDEFS===
 
     template<uint32_t N>
-    _uint_c<N> operator+(const _uint<N>& a, const _uint<N>& b);
-
-    template<uint32_t N>
-    _uint_c<N> operator-(const _uint<N>& a, const _uint<N>& b);
-
-    template<uint32_t N>
-        requires(N < __globals::powers_2[7])
-    _uint_c<N*2> operator*(const _uint<N>& a, const _uint<N>& b);
-
-    template<uint32_t N>
-        requires(N >= __globals::powers_2[7])
-    _uint_c<N*2> operator*(const _uint<N>& a, const _uint<N>& b);
-
-    template<uint32_t N>
-    _uint_c<N*2> operator*(const _uint<N>& a, uint32_t b);
-
-    template<uint32_t N>
-    _uint_c<N*2> operator*(uint32_t b, const _uint<N>& a);
-
-    template<uint32_t N>
     std::ostream& operator<<(std::ostream& out, const _uint<N>& x);
 
     template<uint32_t N>
@@ -81,6 +61,10 @@ namespace lrf
         _uint(_uint<N>&&);
 
         void operator=(const _uint<N>& x);
+        _uint<N>& operator+=(const _uint<N>& x);
+        _uint<N>& operator-=(const _uint<N>& x);
+        _uint<N>& operator*=(const _uint<N>& b) requires(N < __globals::powers_2[7]);
+        _uint<N>& operator*=(const _uint<N>& b) requires(N >= __globals::powers_2[7]);
     };
 
 
@@ -114,10 +98,10 @@ namespace lrf
 
     template<uint32_t N>
         requires(N >= 16 and __globals::is_power_2(N))
-    _uint_c<N>::_uint_c(uint64_t value) : _uint<N>()
+    _uint_c<N>::_uint_c(uint64_t value) : _uint_c<N>()
     {
-        for(uint16_t shift(0); shift < std::min(N,(uint32_t)64); shift += 16)
-            this->value[shift >> 4] = (value >> shift) & uint16_t(-1);
+        for(uint32_t shift(0); shift < N; shift += _uint<N>::word_bits)
+            this->value[shift / _uint<N>::word_bits] = (value >> shift) & uint64_t(0xffff);
     }
 
 
@@ -226,9 +210,10 @@ namespace lrf
     template<uint32_t DENOMINATOR, uint32_t NUMENATOR>
     uint16_t *_uint<N>::get_part_view()
     {
-        static_assert(DENOMINATOR <= _uint<N>::words_num and NUMENATOR < DENOMINATOR and __globals::is_power_2(DENOMINATOR));
+        constexpr uint32_t part_size = _uint<N>::words_num / DENOMINATOR;
+        static_assert(part_size <= _uint<N>::words_num and NUMENATOR < (_uint<N>::words_num-part_size) and __globals::is_power_2(DENOMINATOR));
         constexpr uint32_t offset = (_uint<N>::words_num / DENOMINATOR) * NUMENATOR;
-        return this->value + offset;
+        return this->value + NUMENATOR;
     }
 
 
@@ -237,9 +222,10 @@ namespace lrf
     template<uint32_t DENOMINATOR, uint32_t NUMENATOR>
     const uint16_t *_uint<N>::get_part_view() const
     {
-        static_assert(DENOMINATOR <= _uint<N>::words_num and NUMENATOR < DENOMINATOR and __globals::is_power_2(DENOMINATOR));
+        constexpr uint32_t part_size = _uint<N>::words_num / DENOMINATOR;
+        static_assert(part_size <= _uint<N>::words_num and NUMENATOR <= (_uint<N>::words_num-part_size) and __globals::is_power_2(DENOMINATOR));
         constexpr uint32_t offset = (_uint<N>::words_num / DENOMINATOR) * NUMENATOR;
-        return this->value + offset;
+        return this->value + NUMENATOR;
     }
 
 
@@ -265,6 +251,66 @@ namespace lrf
     void _uint<N>::operator=(const _uint<N>& x)
     {
         std::copy(x.value,x.value+_uint<N>::words_num,this->value);
+    }
+
+
+    template<uint32_t N>
+        requires(N >= 16 and __globals::is_power_2(N))
+    _uint<N>& _uint<N>::operator+=(const _uint<N>& b)
+    {
+        uint16_t r = 0;
+        for(uint32_t i = 0; i < _uint<N>::words_num; ++i)
+        {
+            uint32_t word_sum = (uint32_t)this->value[i] + (uint32_t)b.value[i] + (uint32_t)r;
+            this->value[i] = word_sum & uint16_t(0xffff);
+            r = word_sum >> _uint<N>::word_bits;
+        }
+        return *this;
+    }
+
+
+    template<uint32_t N>
+        requires(N >= 16 and __globals::is_power_2(N))
+    _uint<N>& _uint<N>::operator-=(const _uint<N>& b)
+    {
+        uint16_t r = 0;
+        for(uint32_t i(0); i < _uint<N>::words_num; ++i)
+        {
+            uint32_t sub_total = (uint32_t)b.value[i] + (uint32_t)r;
+            r = sub_total > this->value[i];
+            this->value[i] = ((uint32_t)(r ? _uint<N>::base : 0) - (uint32_t)sub_total) + (uint32_t)this->value[i];
+        }
+        return *this;
+    }
+
+
+    template<uint32_t N>
+        requires(N >= 16 and __globals::is_power_2(N))
+    _uint<N>& _uint<N>::operator*=(const _uint<N>& b) requires(N < __globals::powers_2[7])
+    {
+        std::cout << "a: " << *this << "; b: " << b << '\n';
+        uint64_t pseudo_res[_uint<N*2>::words_num];
+        pseudo_res[_uint<2*N>::words_num-1] = 0;
+        for(uint32_t i(0); i < _uint<2*N>::words_num-1; ++i)
+        {
+            pseudo_res[i] = 0;
+            uint32_t lower_bound = i >= _uint<N>::words_num ? i-_uint<N>::words_num+1 : 0;
+            uint32_t upper_bound = std::min(i,_uint<N>::words_num-1);
+            for(uint32_t j(lower_bound); j <= upper_bound; ++j)
+            {
+                uint32_t a_v = this->value[j];
+                uint32_t b_v = b.value[upper_bound-j+lower_bound];
+                uint32_t val = a_v*b_v;
+                pseudo_res[i] += val;
+            }
+            std::cout << std::hex << pseudo_res[i] << '\n';
+        }
+        for(uint32_t i(1); i < _uint<N*2>::words_num; ++i)
+            pseudo_res[i] += (pseudo_res[i-1] >> 16);
+        for(uint32_t i(0); i < _uint<N*2>::words_num; ++i)
+            this->value[i] = pseudo_res[i] & uint16_t(0xffff);
+        std::cout << "res: " << *this << '\n';
+        return *this;
     }
 
 
@@ -333,33 +379,22 @@ namespace lrf
         requires(N >= __globals::powers_2[7])
     _uint_c<N*2> operator*(const _uint<N>& a, const _uint<N>& b)
     {
-        _uint_c<N*2> res;
+        _uint_c<N*2> res(0);
         std::cout << "a: " << a << "; b: " << b << '\n';
-        if(_uint<N>::words_num == 1)
-        {
-            uint32_t prod = (uint32_t)a.value[0] * (uint32_t)b.value[0];
-            res.value[0] = prod & uint16_t(0xffff);
-            res.value[1] = prod >> 16;
-        }
-        else
-        {
-            const _uint<N/2> a_lower_half(const_cast<_uint<N>::word_type*>(a.template get_part_view<2,0>()));
-            const _uint<N/2> a_upper_half(const_cast<_uint<N>::word_type*>(a.template get_part_view<2,1>()));
-            const _uint<N/2> b_lower_half(const_cast<_uint<N>::word_type*>(b.template get_part_view<2,0>()));
-            const _uint<N/2> b_upper_half(const_cast<_uint<N>::word_type*>(b.template get_part_view<2,1>()));
-            _uint_c<N> z_0 = a_lower_half * b_lower_half;
-            _uint_c<N> z_2 = a_upper_half * b_upper_half;
-            _uint_c<N> z_1 = (a_lower_half + b_lower_half) * (a_upper_half + b_upper_half) - z_0 - z_1;
-            _uint<N/2> quoter_0(res.template get_part_view<4,0>());
-            _uint<N/2> quoter_1(res.template get_part_view<4,1>());
-            _uint<N/2> quoter_2(res.template get_part_view<4,2>());
-            _uint<N/2> quoter_3(res.template get_part_view<4,3>());
-            quoter_0 = z_0.get_lower_half();
-            quoter_1 = _uint<N/2>(z_0.template get_part_view<2,1>()) + _uint<N/2>(z_1.template get_part_view<2,0>());
-            quoter_2 = _uint<N/2>(z_1.template get_part_view<2,1>()) + _uint<N/2>(z_2.template get_part_view<2,0>());
-            quoter_3 = z_2.get_upper_half();
-            std::cout << "q0: " << quoter_0 << "; q1: " << quoter_1 << "; q2: " << quoter_2 << "; q3: " << quoter_3 << '\n';
-        }
+        const _uint<N/2> a_lower_half(const_cast<_uint<N>::word_type*>(a.template get_part_view<2,0>()));
+        const _uint<N/2> a_upper_half(const_cast<_uint<N>::word_type*>(a.template get_part_view<2,_uint<N>::words_num/2>()));
+        const _uint<N/2> b_lower_half(const_cast<_uint<N>::word_type*>(b.template get_part_view<2,0>()));
+        const _uint<N/2> b_upper_half(const_cast<_uint<N>::word_type*>(b.template get_part_view<2,_uint<N>::words_num/2>()));
+        _uint_c<N> z_0 = a_lower_half * b_lower_half;
+        _uint_c<N> z_2 = a_upper_half * b_upper_half;
+        _uint_c<N> z_1 = (a_lower_half + b_lower_half) * (a_upper_half + b_upper_half) - z_0 - z_1;
+        _uint<N> quoter_0(res.template get_part_view<2,0>());
+        _uint<N> quoter_1(res.template get_part_view<2,_uint<N*2>::words_num/4>());
+        _uint<N> quoter_2(res.template get_part_view<4,_uint<N*2>::words_num/2>());
+        quoter_0 += z_0;
+        quoter_1 += z_1;
+        quoter_2 += z_2;
+        std::cout << "q0: " << quoter_0 << "; q1: " << quoter_1 << "; q2: " << quoter_2 << '\n';
         std::cout << "res: " << res << '\n';
         std::cout << "==\n";
         return res;

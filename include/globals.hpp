@@ -9,6 +9,8 @@ namespace lrf
 {
     namespace __globals
     {
+        constexpr uint32_t karatsuba_bound = 1 << 9;
+
         template<typename T>
         concept Iterator = std::input_iterator<T> and requires(T x) { { *x } -> std::same_as<bool>; };
         

@@ -65,6 +65,10 @@ namespace lrf
         _uint<N>& operator*=(const _uint<N>& b) requires(N >= __globals::karatsuba_bound);
         template<uint32_t M>
         bool operator==(const _uint<M>& x) const;
+        _uint_c<N> operator+(const _uint<N>& other) const;
+        _uint_c<N> operator-(const _uint<N>& other) const;
+        _uint_c<N> operator*(const _uint<N>& other) const requires (N < __globals::karatsuba_bound);
+        _uint_c<N> operator*(const _uint<N>& other) const requires (N >= __globals::karatsuba_bound);
     };
 
 
@@ -284,7 +288,10 @@ namespace lrf
     {
         bool res = false;
         uint32_t min_size = std::min(_uint<N>::words_num,_uint<M>::words_num);
-        return std::equal(this->value,this->value+min_size,x.value) and std::none_of(this->value+min_size,this->value+_uint<N>::words_num,[](uint16_t arg) { return arg; }) and std::none_of(x.value+min_size,x.value+_uint<N>::words_num,[](uint16_t arg) { return arg; });
+        bool common_part_is_equal = std::equal(this->value,this->value+min_size,x.value);
+        bool none_of_after_common_1 = std::none_of(this->value+min_size,this->value+_uint<N>::words_num,[](uint16_t arg) { return arg; });
+        bool none_of_after_common_2 = std::none_of(x.value+min_size,x.value+_uint<M>::words_num,[](uint16_t arg) { return arg; });
+        return common_part_is_equal and none_of_after_common_1 and none_of_after_common_2;
     }
 
 
@@ -389,15 +396,15 @@ namespace lrf
         return *this;
     }
 
-
     template<uint32_t N>
-    _uint_c<N> operator+(const _uint<N>& a, const _uint<N>& b)
+        requires(N >= 16 and __globals::is_power_2(N))
+    _uint_c<N> _uint<N>::operator+(const _uint<N>& other) const
     {
         _uint_c<N> res;
         short r = 0;
         for(uint32_t i = 0; i < _uint<N>::words_num; ++i)
         {
-            uint64_t word_sum = (uint32_t)a.value[i] + (uint32_t)b.value[i] + (uint32_t)r;
+            uint64_t word_sum = (uint32_t)this->value[i] + (uint32_t)other.value[i] + (uint32_t)r;
             res.value[i] = word_sum % _uint<N>::base;
             r = word_sum / _uint<N>::base;
         }
@@ -406,23 +413,24 @@ namespace lrf
 
 
     template<uint32_t N>
-    _uint_c<N> operator-(const _uint<N>& a, const _uint<N>& b)
+        requires(N >= 16 and __globals::is_power_2(N))
+    _uint_c<N> _uint<N>::operator-(const _uint<N>& other) const
     {
         _uint_c<N> res;
         uint16_t r = 0;
         for(uint32_t i(0); i < _uint<N>::words_num; ++i)
         {
-            uint64_t sub_total = (uint32_t)b.value[i] + (uint32_t)r;
-            r = sub_total > a.value[i] ? 1 : 0;
-            res.value[i] = ((uint32_t)(r ? _uint<N>::base : 0) - (uint32_t)sub_total) + (uint32_t)a.value[i];
+            uint64_t sub_total = (uint32_t)other.value[i] + (uint32_t)r;
+            r = sub_total > this->value[i] ? 1 : 0;
+            res.value[i] = ((uint32_t)(r ? _uint<N>::base : 0) - (uint32_t)sub_total) + (uint32_t)this->value[i];
         }
         return res;
     }
 
 
     template<uint32_t N>
-        requires(N < __globals::karatsuba_bound)
-    _uint_c<N*2> operator*(const _uint<N>& a, const _uint<N>& b)
+        requires(N >= 16 and __globals::is_power_2(N))
+    _uint_c<N> _uint<N>::operator*(const _uint<N>& other) const requires (N < __globals::karatsuba_bound)
     {
         _uint_c<N*2> res;
         uint64_t pseudo_res[_uint<N*2>::words_num];
@@ -434,8 +442,8 @@ namespace lrf
             uint32_t upper_bound = std::min(i,_uint<N>::words_num-1);
             for(uint32_t j(lower_bound); j <= upper_bound; ++j)
             {
-                uint32_t a_v = a.value[j];
-                uint32_t b_v = b.value[upper_bound-j+lower_bound];
+                uint32_t a_v = this->value[j];
+                uint32_t b_v = other.value[upper_bound-j+lower_bound];
                 uint32_t val = a_v*b_v;
                 pseudo_res[i] += val;
             }
@@ -449,14 +457,14 @@ namespace lrf
 
 
     template<uint32_t N>
-        requires(N >= __globals::karatsuba_bound)
-    _uint_c<N*2> operator*(const _uint<N>& a, const _uint<N>& b)
+        requires(N >= 16 and __globals::is_power_2(N))
+    _uint_c<N> _uint<N>::operator*(const _uint<N>& other) const requires (N >= __globals::karatsuba_bound)
     {
         _uint_c<N*2> res(0);
-        const _uint<N/2> a_lower_half(const_cast<_uint<N>::word_type*>(a.template get_part_view<2,0>()));
-        const _uint<N/2> a_upper_half(const_cast<_uint<N>::word_type*>(a.template get_part_view<2,_uint<N/2>::words_num>()));
-        const _uint<N/2> b_lower_half(const_cast<_uint<N>::word_type*>(b.template get_part_view<2,0>()));
-        const _uint<N/2> b_upper_half(const_cast<_uint<N>::word_type*>(b.template get_part_view<2,_uint<N/2>::words_num>()));
+        const _uint<N/2> a_lower_half(const_cast<_uint<N>::word_type*>(this->template get_part_view<2,0>()));
+        const _uint<N/2> a_upper_half(const_cast<_uint<N>::word_type*>(this->template get_part_view<2,_uint<N/2>::words_num>()));
+        const _uint<N/2> b_lower_half(const_cast<_uint<N>::word_type*>(other.template get_part_view<2,0>()));
+        const _uint<N/2> b_upper_half(const_cast<_uint<N>::word_type*>(other.template get_part_view<2,_uint<N/2>::words_num>()));
         _uint_c<N> z_0 = a_lower_half * b_lower_half;
         _uint_c<N> z_2 = a_upper_half * b_upper_half;
         _uint_c<N> z_1 = (a_lower_half + a_upper_half)*(b_lower_half + b_upper_half) - z_0 - z_2;

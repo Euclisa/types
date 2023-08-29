@@ -107,7 +107,7 @@ TEST(uint_test,multiplication_32768_test)
     std::ifstream fin_samples(test_samples_file_name),fin_res(test_res_file_name);
     while(!fin_samples.eof() and !fin_res.eof())
     {
-        lrf::_uint_c<32768> a,b,res,res_actual;
+        lrf::_uint<32768> a,b,res,res_actual;
         fin_samples >> a >> b;
         fin_res >> res_actual;
         if(fin_samples.eof() or fin_res.eof()) break;

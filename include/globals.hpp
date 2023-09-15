@@ -9,7 +9,7 @@ namespace lrf
 {
     namespace __globals
     {
-        constexpr uint32_t karatsuba_bound = 1 << 9;
+        constexpr uint32_t karatsuba_bound = 1 << 20;
 
         template<typename T>
         concept Iterator = std::input_iterator<T> and requires(T x) { { *x } -> std::same_as<bool>; };
@@ -52,6 +52,29 @@ namespace lrf
         constexpr bool is_power_2(std::size_t x) { return std::find(powers_2.begin(),powers_2.end(),(uint32_t)x) != powers_2.end(); }
 
         constexpr uint32_t pow2(uint8_t x) { return powers_2[x]; }
+
+        template<uint32_t N, uint32_t N_significant, uint32_t M, uint32_t M_significant>
+        constexpr uint32_t max_addition_output_significant_bits()
+        {
+            constexpr uint32_t upper_bound = std::max(N,M);
+            constexpr uint32_t significancy_bound = ((std::max(N_significant,M_significant)+1)/16+1)*16;
+            return std::min(significancy_bound,upper_bound);
+        }
+
+        template<uint32_t N, uint32_t M>
+        constexpr uint32_t max_addition_output_bits() { return std::max(N,M); }
+
+        template<uint32_t N, uint32_t N_significant, uint32_t M, uint32_t M_significant>
+        constexpr uint32_t max_subtraction_output_significant_bits() { return std::max(N,M); }
+
+        template<uint32_t N, uint32_t M>
+        constexpr uint32_t max_subtraction_output_bits() { return std::max(N,M); }
+
+        template<uint32_t N, uint32_t N_significant, uint32_t M, uint32_t M_significant>
+        constexpr uint32_t max_multiplication_output_significant_bits() { return std::min(std::max(N,M),N_significant+M_significant); }
+
+        template<uint32_t N, uint32_t M>
+        constexpr uint32_t max_multiplication_output_bits() { return std::max(N,M); }
     }
 }
 

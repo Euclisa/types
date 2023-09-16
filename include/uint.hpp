@@ -563,7 +563,6 @@ namespace lrf
             pseudo_res[i] += pseudo_res[i-1] >> 16;
         for(uint32_t i(0); i < significant_ops; ++i)
             res.value[i] = pseudo_res[i] & uint16_t(0xffff);
-        std::fill(res.value+significant_ops,res.value+_uint_mul_out_t<N,N_significant,M,M_significant>::words_num,0ULL);
         return res;
     }
 

@@ -118,7 +118,7 @@ namespace lrf
     public:
         _uint();
         _uint(uint64_t value);
-        _uint(std::string_view hex_str);
+        _uint(const std::string_view hex_str);
         template<__globals::Iterator _Iterator>
         _uint(_Iterator begin, _Iterator end);
         _uint(const _uint_view<N,N_significant>&);
@@ -157,13 +157,29 @@ namespace lrf
         requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
     _uint<N,N_significant>::_uint(std::string_view hex_str) : _uint<N,N_significant>()
     {
-        std::string prefixed_hex_str(std::max((int64_t)N/4-(int64_t)hex_str.length(),(int64_t)0),'0');
-        prefixed_hex_str += hex_str;
-        for(uint32_t i(0); i < _uint<N,N_significant>::words_num; ++i)
+        constexpr uint32_t hexes_in_word = _uint<N,N_significant>::word_bits/4;
+        constexpr std::size_t max_str_len = _uint<N,N_significant>::words_num*hexes_in_word;
+        std::size_t str_len = hex_str.length();
+        uint64_t significant_symbols_offset = std::max(int64_t(_uint<N,N_significant>::words_num - _uint<N,N_significant>::significant_words_num)*hexes_in_word - int64_t(max_str_len - (int64_t)str_len),0L);
+        uint32_t significant_words_offset_end = (max_str_len - str_len + significant_symbols_offset) / hexes_in_word;
+        uint32_t significant_words_num = _uint<N,N_significant>::words_num - significant_words_offset_end;
+        uint8_t init_alignment = (str_len-significant_symbols_offset) % 4;
+        std::fill(this->value+significant_words_num,this->value+_uint<N,N_significant>::words_num,0);
+        if(init_alignment)
         {
             std::stringstream stream;
-            stream << prefixed_hex_str.substr(i*_uint<N,N_significant>::word_bits/4,_uint<N,N_significant>::word_bits/4);
-            stream >> std::hex >> this->value[_uint<N,N_significant>::words_num-i-1];
+            stream << hex_str.substr(significant_symbols_offset,init_alignment);
+            uint32_t curr_word_i = significant_words_num - significant_symbols_offset/hexes_in_word - 1;
+            stream >> std::hex >> this->value[curr_word_i];
+            --significant_words_num;
+            significant_symbols_offset += init_alignment;
+        }
+        for(uint64_t i(significant_symbols_offset); i < hex_str.length(); i += hexes_in_word)
+        {
+            std::stringstream stream;
+            stream << hex_str.substr(i,hexes_in_word);
+            uint32_t curr_word_i = significant_words_num - i/hexes_in_word - 1;
+            stream >> std::hex >> this->value[curr_word_i];
         }
     }
 

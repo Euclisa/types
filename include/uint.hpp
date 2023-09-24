@@ -9,40 +9,38 @@
 #include <iomanip>
 #include <iostream>
 #include <algorithm>
+#include <type_traits>
 #include "globals.hpp"
+#include "view_ref_storage.hpp"
 
 namespace lrf
 {
-    template<uint32_t N, uint32_t N_significant=N>
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
         requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
     class _uint_view;
 
-    template<uint32_t N, uint32_t N_significant=N>
-        requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
-    class _uint;
-
     // ===BEGIN TYPEDEFS===
 
-    typedef _uint<128> uint128_t;
-    typedef _uint<256> uint256_t;
-    typedef _uint<512> uint512_t;
-    typedef _uint<1024> uint1024_t;
-    typedef _uint<2048> uint2048_t;
-    typedef _uint<4096> uint4096_t;
+    typedef _uint_view<128,128,false> uint128_t;
+    typedef _uint_view<256,256,false> uint256_t;
+    typedef _uint_view<512,512,false> uint512_t;
+    typedef _uint_view<1024,1024,false> uint1024_t;
+    typedef _uint_view<2048,2048,false> uint2048_t;
+    typedef _uint_view<4096,4096,false> uint4096_t;
 
 
     template<uint32_t N, uint32_t N_significant, uint32_t M, uint32_t M_significant>
-    using _uint_add_out_t = _uint<__globals::max_addition_output_bits<N,M>(),__globals::max_addition_output_significant_bits<N,N_significant,M,M_significant>()>;
+    using _uint_add_out_t = _uint_view<__globals::max_addition_output_bits<N,M>(),__globals::max_addition_output_significant_bits<N,N_significant,M,M_significant>(),false>;
 
     template<uint32_t N, uint32_t N_significant, uint32_t M, uint32_t M_significant>
-    using _uint_sub_out_t = _uint<__globals::max_subtraction_output_bits<N,M>(),__globals::max_subtraction_output_significant_bits<N,N_significant,M,M_significant>()>;
+    using _uint_sub_out_t = _uint_view<__globals::max_subtraction_output_bits<N,M>(),__globals::max_subtraction_output_significant_bits<N,N_significant,M,M_significant>(),false>;
 
     template<uint32_t N, uint32_t N_significant, uint32_t M, uint32_t M_significant>
-    using _uint_mul_out_t = _uint<__globals::max_multiplication_output_bits<N,M>(),__globals::max_multiplication_output_significant_bits<N,N_significant,M,M_significant>()>;
+    using _uint_mul_out_t = _uint_view<__globals::max_multiplication_output_bits<N,M>(),__globals::max_multiplication_output_significant_bits<N,N_significant,M,M_significant>(),false>;
 
     // ===END TYPEDEFS===
 
-    template<uint32_t N, uint32_t N_significant>
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
         requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
     class _uint_view
     {
@@ -52,158 +50,385 @@ namespace lrf
         static constexpr uint32_t words_num = N / word_bits;
         static constexpr uint32_t significant_words_num = N_significant / word_bits;
         static constexpr uint32_t base = 1 << word_bits;
+        static constexpr uint8_t parts_num = sizeof...(ViewsMask);
+	    static constexpr uint32_t parts_size = words_num / parts_num;
+        static constexpr uint32_t parts_size_bits = parts_size * word_bits;
 
-        uint16_t *value;
+    private:
+	    void init(ViewRefStorage<false,std::string_view> hex_str, uint8_t part_i);
+
+        template<uint32_t M_significant, bool ViewMaskOther>
+	    void init(ViewRefStorage<true,_uint_view<parts_size_bits,M_significant,ViewMaskOther>> arg, uint8_t part_i);
+
+        template<uint32_t M_significant, bool... ViewMaskOther>
+	    void init(ViewRefStorage<false,_uint_view<parts_size_bits,M_significant,ViewMaskOther...>> arg, uint8_t part_i);
+
+	    void init(ViewRefStorage<false,uint64_t> val, uint8_t part_i);
+
+        template<__globals::Iterator _Iterator>
+        void init(ViewRefStorage<false,std::pair<_Iterator,_Iterator>> iters, uint8_t part_i);
+
+        template<bool View, typename T>
+	    void init(ViewRefStorage<View,T> ptr);
+        template<bool View, typename T, typename... InitTail>
+	    void init(ViewRefStorage<View,T> ptr, InitTail... tail);
+
+        template<bool View, bool... ViewsMaskTail>
+        void destroy();
+
+        template<bool View, bool... ViewsMaskTail>
+        void alloc();
+
+        //template<uint32_t M, uint32_t M_significant, bool... ViewsMaskOther>
+        //void copy(const _uint_view<M,M_significant,ViewsMaskOther...>& other);
+
+        template<uint8_t ViewInd, bool View, bool... ViewsMaskTail>
+        static constexpr bool get_view();
+
+        template<uint32_t M, uint32_t M_significant, bool... ViewsMaskOther>
+        struct uint_other
+        {
+            template<bool View, bool... ViewsMaskOtherTail>
+            static void copy(_uint_view<N,N_significant,ViewsMask...>& origin, const _uint_view<M,M_significant,ViewsMaskOther...>& other);
+
+            template<bool View, bool... ViewsMaskTail>
+            static void check_and_init_remaining(_uint_view<N,N_significant,ViewsMask...>& origin) requires(N <= M);
+        };
+
+    protected:
+        uint16_t& at(uint32_t i);
+
+        template<uint8_t ViewInd>
+        static constexpr bool get_view();
+
+        _uint_view();
+    public:
+        uint16_t **value;
 
         template<uint32_t DENOMINATOR, uint32_t NUMENATOR>
         uint16_t *get_part_view();
         template<uint32_t DENOMINATOR, uint32_t NUMENATOR>
         const uint16_t *get_part_view() const;
 
-        _uint_view(uint16_t *ptr);
-        _uint_view(const _uint_view<N,N_significant>&);
-        _uint_view(_uint_view<N,N_significant>&&);
+        template<typename... InitArgs>
+        _uint_view(InitArgs... args);
+        _uint_view(const _uint_view<N,N_significant,ViewsMask...>&);
+        _uint_view(_uint_view<N,N_significant,ViewsMask...>&&);
+        ~_uint_view();
 
         template<uint32_t M, uint32_t M_significant>
-        operator _uint<M,M_significant>() const;
+        operator _uint_view<M,M_significant,ViewsMask...>() const;
 
         operator std::string() const;
 
-        _uint_view<N,N_significant>& operator=(const _uint_view<N,N_significant>& x);
+        _uint_view<N,N_significant,ViewsMask...>& operator=(const _uint_view<N,N_significant,ViewsMask...>& x);
 
         template<uint32_t M, uint32_t M_significant>
         _uint_view<N,N_significant>& operator=(const _uint_view<M,M_significant>& x);
 
-        template<uint32_t M, uint32_t M_significant>
-        _uint_view<N,N_significant>&
-        operator+=(const _uint_view<M,M_significant>& x) requires(N_significant == N);
+        template<uint32_t M, uint32_t M_significant, bool... ViewsMaskOther>
+        _uint_view<N,N_significant,ViewsMask...>&
+        operator+=(const _uint_view<M,M_significant,ViewsMaskOther...>& x) requires(N_significant == N);
 
-        template<uint32_t M, uint32_t M_significant>
-        _uint_view<N,N_significant>&
-        operator-=(const _uint_view<M,M_significant>& x) requires(N_significant == N);
+        template<uint32_t M, uint32_t M_significant, bool... ViewsMaskOther>
+        _uint_view<N,N_significant,ViewsMask...>&
+        operator-=(const _uint_view<M,M_significant,ViewsMaskOther...>& x) requires(N_significant == N);
 
-        template<uint32_t M, uint32_t M_significant>
-        _uint_view<N,N_significant>&
-        operator*=(const _uint_view<M,M_significant>& b) requires(N < __globals::karatsuba_bound and N_significant == N);
+        template<uint32_t M, uint32_t M_significant, bool... ViewsMaskOther>
+        _uint_view<N,N_significant,ViewsMask...>&
+        operator*=(const _uint_view<M,M_significant,ViewsMaskOther...>& b) requires(N < __globals::karatsuba_bound and N_significant == N);
 
-        template<uint32_t M, uint32_t M_significant>
-        _uint_view<N,N_significant>&
-        operator*=(const _uint_view<M,M_significant>& b) requires(N >= __globals::karatsuba_bound and N_significant == N);
+        template<uint32_t M, uint32_t M_significant, bool... ViewsMaskOther>
+        _uint_view<N,N_significant,ViewsMask...>&
+        operator*=(const _uint_view<M,M_significant,ViewsMaskOther...>& b) requires(N >= __globals::karatsuba_bound and N_significant == N);
 
-        template<uint32_t M, uint32_t M_significant>
+        template<uint32_t M, uint32_t M_significant, bool... ViewsMaskOther>
         _uint_add_out_t<N,N_significant,M,M_significant>
-        operator+(const _uint_view<M,M_significant>& other) const;
+        operator+(const _uint_view<M,M_significant,ViewsMaskOther...>& other) const;
 
-        template<uint32_t M, uint32_t M_significant>
+        template<uint32_t M, uint32_t M_significant, bool... ViewsMaskOther>
         _uint_sub_out_t<N,N_significant,M,M_significant>
-        operator-(const _uint_view<M,M_significant>& other) const;
+        operator-(const _uint_view<M,M_significant,ViewsMaskOther...>& other) const;
 
-        template<uint32_t M, uint32_t M_significant>
+        template<uint32_t M, uint32_t M_significant, bool... ViewsMaskOther>
         _uint_mul_out_t<N,N_significant,M,M_significant>
-        operator*(const _uint_view<M,M_significant>& other) const requires (N < __globals::karatsuba_bound);
+        operator*(const _uint_view<M,M_significant,ViewsMaskOther...>& other) const requires (N < __globals::karatsuba_bound);
         
-        template<uint32_t M, uint32_t M_significant>
+        template<uint32_t M, uint32_t M_significant, bool... ViewsMaskOther>
         _uint_mul_out_t<N,N_significant,M,M_significant>
-        operator*(const _uint_view<M,M_significant>& other) const requires (N >= __globals::karatsuba_bound);
+        operator*(const _uint_view<M,M_significant,ViewsMaskOther...>& other) const requires (N >= __globals::karatsuba_bound);
 
-        template<uint32_t M, uint32_t M_significant>
-        bool operator==(const _uint_view<M,M_significant>& x) const;
+        template<uint32_t M, uint32_t M_significant, bool... ViewsMaskOther>
+        bool operator==(const _uint_view<M,M_significant,ViewsMaskOther...>& x) const;
     };
 
 
-    template<uint32_t N, uint32_t N_significant>
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
         requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
-    class _uint : public _uint_view<N,N_significant>
+	void _uint_view<N,N_significant,ViewsMask...>::init(ViewRefStorage<false,std::string_view> hex_str, uint8_t part_i)
     {
-    public:
-        _uint();
-        _uint(uint64_t value);
-        _uint(const std::string_view hex_str);
-        template<__globals::Iterator _Iterator>
-        _uint(_Iterator begin, _Iterator end);
-        _uint(const _uint_view<N,N_significant>&);
-        _uint(const _uint<N,N_significant>&);
-        _uint(_uint<N,N_significant>&&);
-
-        _uint<N,N_significant>& operator=(const _uint<N,N_significant>&);
-
-        template<uint32_t M, uint32_t M_significant>
-        operator _uint<M,M_significant>() const;
-        template<uint32_t M, uint32_t M_significant>
-        _uint<N,N_significant>& operator=(const _uint_view<M,M_significant>& x);
-
-        ~_uint();
-    };
-
-
-    template<uint32_t N, uint32_t N_significant>
-        requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
-    _uint<N,N_significant>::_uint() : _uint_view<N,N_significant>(new typename _uint<N,N_significant>::word_type[_uint<N,N_significant>::words_num]) {}
-
-
-    template<uint32_t N, uint32_t N_significant>
-        requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
-    _uint<N,N_significant>::_uint(uint64_t value) : _uint<N,N_significant>()
-    {
-        for(uint32_t shift(0); shift < N; shift += _uint<N,N_significant>::word_bits)
-        {
-            uint16_t l = shift < 64 ? (value >> shift) & uint64_t(0xffff) : 0;
-            this->value[shift / _uint<N,N_significant>::word_bits] = l;
-        }
-    }
-
-
-    template<uint32_t N, uint32_t N_significant>
-        requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
-    _uint<N,N_significant>::_uint(std::string_view hex_str) : _uint<N,N_significant>()
-    {
-        constexpr uint32_t hexes_in_word = _uint<N,N_significant>::word_bits/4;
-        constexpr std::size_t max_str_len = _uint<N,N_significant>::words_num*hexes_in_word;
-        std::size_t str_len = hex_str.length();
-        uint64_t significant_symbols_offset = std::max(int64_t(_uint<N,N_significant>::words_num - _uint<N,N_significant>::significant_words_num)*hexes_in_word - int64_t(max_str_len - (int64_t)str_len),0L);
+        constexpr uint32_t significant_words_in_curr_part = this->significant_words_num - part_i*this->parts_size;
+        constexpr uint32_t hexes_in_word = this->word_bits/4;
+        constexpr std::size_t max_str_len = this->parts_size*hexes_in_word;
+        std::size_t str_len = hex_str.value.length();
+        uint64_t significant_symbols_offset = std::max(int64_t(this->parts_size - significant_words_in_curr_part)*hexes_in_word - int64_t(max_str_len - (int64_t)str_len),0L);
         uint32_t significant_words_offset_end = (max_str_len - str_len + significant_symbols_offset) / hexes_in_word;
-        uint32_t significant_words_num = _uint<N,N_significant>::words_num - significant_words_offset_end;
+        uint32_t significant_words_num = this->parts_size - significant_words_offset_end;
         uint8_t init_alignment = (str_len-significant_symbols_offset) % 4;
-        std::fill(this->value+significant_words_num,this->value+_uint<N,N_significant>::words_num,0);
+        std::fill(this->value+significant_words_num,this->value+this->parts_size,0);
         if(init_alignment)
         {
             std::stringstream stream;
-            stream << hex_str.substr(significant_symbols_offset,init_alignment);
+            stream << hex_str.value.substr(significant_symbols_offset,init_alignment);
             uint32_t curr_word_i = significant_words_num - significant_symbols_offset/hexes_in_word - 1;
-            stream >> std::hex >> this->value[curr_word_i];
+            stream >> std::hex >> this->value[part_i][curr_word_i];
             --significant_words_num;
             significant_symbols_offset += init_alignment;
         }
-        for(uint64_t i(significant_symbols_offset); i < hex_str.length(); i += hexes_in_word)
+        for(uint64_t i(significant_symbols_offset); i < hex_str.value.length(); i += hexes_in_word)
         {
             std::stringstream stream;
-            stream << hex_str.substr(i,hexes_in_word);
+            stream << hex_str.value.substr(i,hexes_in_word);
             uint32_t curr_word_i = significant_words_num - i/hexes_in_word - 1;
-            stream >> std::hex >> this->value[curr_word_i];
+            stream >> std::hex >> this->value[part_i][curr_word_i];
         }
     }
 
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
+        requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
+    template<uint32_t M_significant, bool ViewMaskOther>
+	void _uint_view<N,N_significant,ViewsMask...>::init(ViewRefStorage<true,_uint_view<parts_size_bits,M_significant,ViewMaskOther>> arg, uint8_t part_i)
+    {
+        this->value[part_i] = arg.value.value[0];
+    }
 
-    template<uint32_t N, uint32_t N_significant>
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
+        requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
+    template<uint32_t M_significant, bool... ViewMaskOther>
+	void _uint_view<N,N_significant,ViewsMask...>::init(ViewRefStorage<false,_uint_view<parts_size_bits,M_significant,ViewMaskOther...>> arg, uint8_t part_i)
+    {
+        for(uint32_t i(0); i < this->parts_size; ++i)
+            this->value[part_i][i] = arg.value.at(part_i);
+    }
+
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
+        requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
+    void _uint_view<N,N_significant,ViewsMask...>::init(ViewRefStorage<false,uint64_t> value, uint8_t part_i)
+    {
+        constexpr uint32_t significant_words_in_curr_part = this->significant_words_num - part_i*this->parts_size;
+        constexpr uint32_t significant_bits_in_part = significant_words_in_curr_part * this->word_bits;
+        for(uint32_t shift(0); shift < significant_bits_in_part; shift += this->word_bits)
+        {
+            uint16_t l = shift < 64 ? (value.value >> shift) & uint64_t(0xffff) : 0;
+            this->value[part_i][shift / this->word_bits] = l;
+        }
+        std::fill(this->value[part_i]+significant_words_in_curr_part,this->value[part_i]+this->parts_size,0);
+    }
+
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
         requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
     template<__globals::Iterator _Iterator>
-    _uint<N,N_significant>::_uint(_Iterator begin, _Iterator end) : _uint<N,N_significant>()
+    void _uint_view<N,N_significant,ViewsMask...>::init(ViewRefStorage<false,std::pair<_Iterator,_Iterator>> iters, uint8_t part_i)
     {
-        _Iterator curr = begin;
+        constexpr uint32_t significant_words_in_curr_part = this->significant_words_num - part_i*this->parts_size;
+        auto begin = iters.value.first;
+        auto end = iters.value.second;
+        auto curr = begin;
         std::size_t bit_i = 0;
-        while(curr != end and bit_i < _uint_view<N,N_significant>::significant_words_num)
+        std::fill(this->value[part_i],this->value[part_i]+this->parts_size,0);
+        while(curr != end and bit_i < significant_words_in_curr_part)
         {
-            this->value[bit_i/_uint<N,N_significant>::word_bits] += *(curr++) ? this->pow2(bit_i%_uint<N,N_significant>::word_bits) : 0;
+            this->value[part_i][bit_i/this->word_bits] += *(curr++) ? this->pow2(bit_i%this->word_bits) : 0;
             ++bit_i;
         }
     }
 
-
-    template<uint32_t N, uint32_t N_significant>
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
         requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
-    _uint<N,N_significant>::_uint(const _uint_view<N,N_significant>& x) : _uint<N,N_significant>()
+    template<bool View, typename T>
+	void _uint_view<N,N_significant,ViewsMask...>::init(ViewRefStorage<View,T> arg)
     {
-        std::copy(x.value,x.value+_uint<N,N_significant>::words_num,this->value);
+        constexpr uint8_t part_i = parts_num-1;
+        this->init(arg,part_i);
+    }
+
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
+        requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
+    template<bool View, typename T, typename... InitTail>
+	void _uint_view<N,N_significant,ViewsMask...>::init(ViewRefStorage<View,T> arg, InitTail... tail)
+    {
+        constexpr uint8_t tail_size = sizeof...(tail);
+        constexpr uint8_t part_i = parts_num-tail_size-1;
+        this->init(arg,part_i);
+        this->init(tail...);
+    }
+
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
+        requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
+    template<bool View, bool... ViewsMaskTail>
+    void _uint_view<N,N_significant,ViewsMask...>::destroy()
+    {
+        constexpr uint8_t tail_size = sizeof...(ViewsMaskTail);
+        constexpr uint8_t part_i = parts_num-tail_size-1;
+        if(!View)
+            delete[] this->value[part_i];
+        if constexpr(tail_size > 0)
+            this->destroy<ViewsMaskTail...>();
+    }
+
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
+        requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
+    template<bool View, bool... ViewsMaskTail>
+    void _uint_view<N,N_significant,ViewsMask...>::alloc()
+    {
+        constexpr uint8_t tail_size = sizeof...(ViewsMaskTail);
+        constexpr uint8_t part_i = parts_num-tail_size-1;
+        if(!View)
+            this->value[part_i] = new typename _uint_view<N,N_significant,ViewsMask...>::word_type[this->parts_size];
+        if constexpr(tail_size > 0)
+            this->destroy<ViewsMaskTail...>();
+    }
+
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
+        requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
+    template<uint32_t M, uint32_t M_significant, bool... ViewsMaskOther>
+    template<bool View, bool... ViewsMaskOtherTail>
+    void _uint_view<N,N_significant,ViewsMask...>::uint_other<M,M_significant,ViewsMaskOther...>::copy(_uint_view<N,N_significant,ViewsMask...>& origin, const _uint_view<M,M_significant,ViewsMaskOther...>& other)
+    {
+        constexpr uint8_t other_tail_size = sizeof...(ViewsMaskOtherTail);
+        constexpr uint8_t other_part_i = parts_num-other_tail_size-1;
+        constexpr uint32_t current_word_i = _uint_view<M,M_significant,ViewsMaskOther...>::parts_size*other_part_i;
+
+        if constexpr(current_word_i >= _uint_view<N,N_significant,ViewsMask...>::words_num)
+            return;
+
+        constexpr uint8_t origin_part_i = current_word_i / _uint_view<N,N_significant,ViewsMask...>::parts_size;
+        constexpr uint32_t origin_word_in_part_i = current_word_i % _uint_view<N,N_significant,ViewsMask...>::parts_size;
+        constexpr bool origin_current_view = _uint_view<N,N_significant,ViewsMask...>::get_view<origin_part_i>();
+        constexpr uint32_t words_can_be_copied = std::min(
+                                                    _uint_view<N,N_significant,ViewsMask...>::words_num - current_word_i,
+                                                    _uint_view<M,M_significant,ViewsMaskOther...>::parts_size
+                                                );
+        if constexpr(origin_current_view)
+        {
+            static_assert(_uint_view<M,M_significant,ViewsMaskOther...>::parts_size == _uint_view<N,N_significant,ViewsMask...>::parts_size, "Can set view only on part with the same size.");
+            origin.value[origin_part_i] = other.value[other_part_i];
+        }
+        else
+        {
+            constexpr uint8_t origin_parts_in_one_other_num = words_can_be_copied / _uint_view<N,N_significant,ViewsMask...>::parts_size;
+            if constexpr(origin_parts_in_one_other_num <= 1)
+            {
+                constexpr uint32_t part_to_copy_size = words_can_be_copied;
+                std::copy(
+                    other.value[other_part_i],
+                    other.value[other_part_i]+part_to_copy_size,
+                    origin.value[origin_part_i]+origin_word_in_part_i
+                );
+            }
+            else
+            {
+                constexpr uint32_t part_to_copy_size = _uint_view<N,N_significant,ViewsMask...>::parts_size;
+                for(uint8_t i(0); i < origin_parts_in_one_other_num; ++i)
+                {
+                    std::copy(
+                        other.value[other_part_i],
+                        other.value[other_part_i]+part_to_copy_size,
+                        origin.value[origin_part_i]+origin_word_in_part_i
+                    );
+                }
+            }
+        }
+        if constexpr(other_tail_size > 0)
+            _uint_view<N,N_significant,ViewsMask...>::uint_other<M,M_significant,ViewsMaskOther...>::copy<ViewsMaskOtherTail...>(origin,other);
+    }
+
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
+        requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
+    template<uint32_t M, uint32_t M_significant, bool... ViewsMaskOther>
+    template<bool View, bool... ViewsMaskTail>
+    void _uint_view<N,N_significant,ViewsMask...>::uint_other<M,M_significant,ViewsMaskOther...>::check_and_init_remaining(_uint_view<N,N_significant,ViewsMask...>& origin) requires(N <= M)
+    {
+        constexpr uint8_t tail_size = sizeof...(ViewsMaskTail);
+        constexpr uint8_t part_i = parts_num-tail_size-1;
+        constexpr uint32_t current_word_i = _uint_view<N,N_significant,ViewsMask...>::parts_size*part_i;
+        
+        if constexpr(current_word_i >= _uint_view<M,M_significant,ViewsMaskOther...>::words_num)
+        {
+            static_assert(!View,"Can't set view. Sizes mismatch.");
+            std::fill(
+                origin.value[part_i],
+                origin.value[part_i]+_uint_view<N,N_significant,ViewsMask...>::parts_size,
+                0
+            );
+        }
+
+        if constexpr(tail_size > 0)
+            _uint_view<N,N_significant,ViewsMask...>::uint_other<M,M_significant,ViewsMaskOther...>::check_and_init_remaining<ViewsMaskTail...>(origin);
+    }
+
+
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
+        requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
+    uint16_t& _uint_view<N,N_significant,ViewsMask...>::at(uint32_t i)
+    {
+        return this->value[i/this->parts_size][i%this->parts_size];
+    }
+
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
+        requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
+    template<uint8_t ViewInd, bool View, bool... ViewsMaskTail>
+    constexpr bool _uint_view<N,N_significant,ViewsMask...>::get_view()
+    {
+        static_assert(ViewInd < _uint_view<N,N_significant,ViewsMask...>::parts_num,"Index out of range");
+        constexpr uint8_t tail_size = sizeof...(ViewsMaskTail);
+        constexpr uint8_t curr_part_i = _uint_view<N,N_significant,ViewsMask...>::parts_num-tail_size-1;
+        if constexpr(curr_part_i == ViewInd)
+            return View;
+        return _uint_view<N,N_significant,ViewsMask...>::get_view<ViewInd,ViewsMaskTail...>();
+    }
+
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
+        requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
+    template<uint8_t ViewInd>
+    constexpr bool _uint_view<N,N_significant,ViewsMask...>::get_view()
+    {
+        static_assert(ViewInd < _uint_view<N,N_significant,ViewsMask...>::parts_num,"Index out of range");
+        return _uint_view<N,N_significant,ViewsMask...>::get_view<ViewInd,ViewsMask...>();
+    }
+
+
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
+        requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
+    _uint_view<N,N_significant,ViewsMask...>::_uint_view()
+    {
+        this->value = new std::add_pointer_t<typename _uint_view<N,N_significant,ViewsMask...>::word_type>[this->parts_num];
+        this->alloc<ViewsMask...>();
+    }
+
+
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
+        requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
+    template<typename... InitArgs>
+    _uint_view<N,N_significant,ViewsMask...>::_uint_view(InitArgs... args)
+    {
+        this->init(ViewRefStorage<ViewsMask,__globals::unqualified_t<InitArgs>>(args)...);
+    }
+
+
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
+        requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
+    _uint_view<N,N_significant,ViewsMask...>::~_uint_view()
+    {
+        this->destroy<ViewsMask...>();
+    }
+
+
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
+        requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
+    _uint_view<N,N_significant,ViewsMask...>::_uint_view(const _uint_view<N,N_significant,ViewsMask...>& x) : _uint_view<N,N_significant>()
+    {
+        
     }
 
 

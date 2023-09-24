@@ -4,6 +4,7 @@
 #include <array>
 #include <algorithm>
 #include <cstdint>
+#include <type_traits>
 
 namespace lrf
 {
@@ -75,6 +76,15 @@ namespace lrf
 
         template<uint32_t N, uint32_t M>
         constexpr uint32_t max_multiplication_output_bits() { return std::max(N,M); }
+
+        template<typename T>
+        struct unqualified
+        {
+            typedef std::remove_const_t<std::remove_reference_t<T>> type;
+        };
+
+        template<typename T>
+        using unqualified_t = unqualified<T>::type;
     }
 }
 

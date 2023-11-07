@@ -73,11 +73,17 @@ namespace lrf
         template<bool View, typename T, typename... InitTail>
 	    void init(ViewRefStorage<View,T> ptr, InitTail... tail);
 
+        template<uint32_t M, uint32_t M_significant, bool... ViewMaskOther>
+        void init(ViewRefStorage<true,std::pair<_uint_view<M,M_significant,ViewMaskOther...>,uint8_t>> other, uint8_t part_i) requires(_uint_view<M,M_significant,ViewMaskOther...>::parts_size == _uint_view<N,N_significant,ViewsMask...>::words_num);
+
         template<bool View, bool... ViewsMaskTail>
         void destroy();
 
         template<bool View, bool... ViewsMaskTail>
         void alloc();
+
+        template<bool View, bool... ViewsMaskTail>
+        void move(_uint_view<N,N_significant,ViewsMask...>&&);
 
         //template<uint32_t M, uint32_t M_significant, bool... ViewsMaskOther>
         //void copy(const _uint_view<M,M_significant,ViewsMaskOther...>& other);
@@ -114,15 +120,19 @@ namespace lrf
     public:
         uint16_t **value;
 
-        template<uint32_t DENOMINATOR, uint32_t NUMENATOR>
+        template<uint32_t part_i>
         uint16_t *get_part_view();
-        template<uint32_t DENOMINATOR, uint32_t NUMENATOR>
+        template<uint32_t part_i>
         const uint16_t *get_part_view() const;
 
         template<typename... InitArgs>
         _uint_view(InitArgs... args);
         _uint_view(const _uint_view<N,N_significant,ViewsMask...>&);
+        template<uint32_t M, uint32_t M_significant, bool... ViewsMaskOther>
+        _uint_view(const _uint_view<M,M_significant,ViewsMaskOther...>&);
+
         _uint_view(_uint_view<N,N_significant,ViewsMask...>&&);
+
         ~_uint_view();
 
         template<uint32_t M, uint32_t M_significant>
@@ -132,8 +142,8 @@ namespace lrf
 
         _uint_view<N,N_significant,ViewsMask...>& operator=(const _uint_view<N,N_significant,ViewsMask...>& x);
 
-        template<uint32_t M, uint32_t M_significant>
-        _uint_view<N,N_significant>& operator=(const _uint_view<M,M_significant>& x);
+        template<uint32_t M, uint32_t M_significant, bool... ViewsMaskOther>
+        _uint_view<N,N_significant,ViewsMask...>& operator=(const _uint_view<M,M_significant,ViewsMaskOther...>& x);
 
         template<uint32_t M, uint32_t M_significant, bool... ViewsMaskOther>
         _uint_view<N,N_significant,ViewsMask...>&
@@ -172,74 +182,6 @@ namespace lrf
     };
 
 
-
-    /*
-        This function performs copying from one template instance to another.
-        Does it according to 'origin's 'ViewsMask', so parts with view flag set receive data from 'other' as references.
-    */
-    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
-        requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
-    template<uint32_t M, uint32_t M_significant, bool... ViewsMaskOther>
-    template<bool View, bool... ViewsMaskOtherTail>
-    void _uint_view<N,N_significant,ViewsMask...>::uint_other<M,M_significant,ViewsMaskOther...>::copy(_uint_view<N,N_significant,ViewsMask...>& origin, const _uint_view<M,M_significant,ViewsMaskOther...>& other)
-    {
-        constexpr uint8_t other_tail_size = sizeof...(ViewsMaskOtherTail);
-        constexpr uint8_t other_part_i = _uint_view<M,M_significant,ViewsMaskOther...>::parts_num-other_tail_size-1;
-        constexpr uint32_t current_word_i = _uint_view<M,M_significant,ViewsMaskOther...>::parts_size*other_part_i;
-
-        if constexpr(current_word_i >= _uint_view<N,N_significant,ViewsMask...>::words_num)
-            return;
-
-        constexpr uint8_t origin_part_i = current_word_i / _uint_view<N,N_significant,ViewsMask...>::parts_size;
-        constexpr uint32_t origin_word_in_part_i = current_word_i % _uint_view<N,N_significant,ViewsMask...>::parts_size;
-
-        // This routine is able to copy from instance with any template arguments to instance with any template arguments.
-        // We copy from 'other' part-by-part and this is the number of 'origin's parts inside one 'other's part.
-        constexpr uint8_t origin_parts_in_one_other_num = std::max(_uint_view<M,M_significant,ViewsMaskOther...>::parts_size / _uint_view<N,N_significant,ViewsMask...>::parts_size,1UL);
-
-        // Checks whether 'view' flag is set for any origin parts that will be populated with values from 'other' or not.
-        // If yes, then parts must have equal sizes
-        // if no, then we can safely copy from 'other'
-        constexpr bool origin_current_view = _uint_view<N,N_significant,ViewsMask...>::any_view<origin_part_i,origin_part_i+origin_parts_in_one_other_num>();
-
-        if constexpr(origin_current_view)
-        {
-            static_assert(_uint_view<M,M_significant,ViewsMaskOther...>::parts_size == _uint_view<N,N_significant,ViewsMask...>::parts_size, "Can set view only on part with the same size.");
-            origin.value[origin_part_i] = other.value[other_part_i];
-        }
-        else
-        {
-            // Could write it in more compact form but supposed that it would be better to compile 'for' loop only when it is necessary
-            if constexpr(origin_parts_in_one_other_num == 1)
-            {
-                // If 'origin's part is equal or larger, then just copy from other
-                constexpr uint32_t part_to_copy_size = _uint_view<M,M_significant,ViewsMaskOther...>::parts_size;
-                std::copy(
-                    other.value[other_part_i],
-                    other.value[other_part_i]+part_to_copy_size,
-                    origin.value[origin_part_i]+origin_word_in_part_i
-                );
-            }
-            else
-            {
-                // If 'origin's is smaller, then
-                constexpr uint32_t part_to_copy_size = _uint_view<N,N_significant,ViewsMask...>::parts_size;
-                // This is just for debugging purposes. Number of parts is always a power of 2, hence if 'origin's part size is smaller then i
-                static_assert(origin_word_in_part_i == 0, "If origin part is smaller than copying must start at the base of its part");
-                // Iterate over 'origin's parts filling them with conten of (one) current 'other's part
-                for(uint8_t i(0); i < origin_parts_in_one_other_num; ++i)
-                {
-                    std::copy(
-                        other.value[other_part_i]+part_to_copy_size*i,
-                        other.value[other_part_i]+part_to_copy_size*(i+1),
-                        origin.value[origin_part_i+i]
-                    );
-                }
-            }
-        }
-        if constexpr(other_tail_size > 0)
-            _uint_view<N,N_significant,ViewsMask...>::uint_other<M,M_significant,ViewsMaskOther...>::copy<ViewsMaskOtherTail...>(origin,other);
-    }
 
     template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
         requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
@@ -564,6 +506,17 @@ namespace lrf
         }
     }
 
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
+        requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
+    template<uint32_t M, uint32_t M_significant, bool... ViewMaskOther>
+    void _uint_view<N,N_significant,ViewsMask...>::init(ViewRefStorage<true,std::pair<_uint_view<M,M_significant,ViewMaskOther...>,uint8_t>> other, uint8_t part_i) requires(_uint_view<M,M_significant,ViewMaskOther...>::parts_size == _uint_view<N,N_significant,ViewsMask...>::words_num)
+    {
+        constexpr uint32_t significant_words_in_curr_part = _uint_view<N,N_significant,ViewsMask...>::significant_words_in_part(part_i);
+        constexpr uint32_t significant_words_in_part_other = _uint_view<M,M_significant,ViewMaskOther...>::significant_words_in_part(part_i);
+        static_assert(significant_words_in_curr_part <= significant_words_in_part_other, "Can't set view on instance with number of significant words less than in current part.");
+        this->value[part_i] = other.value.first.value[other.value.second];
+    }
+
     // === END 'init' FUNCTIONS COLLECTION ===
 
 
@@ -591,106 +544,189 @@ namespace lrf
     {
         constexpr uint8_t tail_size = sizeof...(ViewsMaskTail);
         constexpr uint8_t part_i = parts_num-tail_size-1;
-        if(!View)
+        if(!View && this->value[part_i])
             delete[] this->value[part_i];
         if constexpr(tail_size > 0)
             this->destroy<ViewsMaskTail...>();
     }
 
 
+    /*
+        Copy constructor.
+        Wrapper for'copy' routine (see bellow).
+    */
     template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
         requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
-    _uint_view<N,N_significant,ViewsMask...>::_uint_view(const _uint_view<N,N_significant,ViewsMask...>& x) : _uint_view<N,N_significant>()
+    _uint_view<N,N_significant,ViewsMask...>::_uint_view(const _uint_view<N,N_significant,ViewsMask...>& x)
     {
-        
+        _uint_view<N,N_significant,ViewsMask...>::uint_other<N,N_significant,ViewsMask...>::copy(*this,x);
     }
 
 
-    template<uint32_t N, uint32_t N_significant>
+    /*
+        Copy constructor but template.
+    */
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
         requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
-    _uint<N,N_significant>::_uint(const _uint<N,N_significant>& x) : _uint<N,N_significant>()
+    template<uint32_t M, uint32_t M_significant, bool... ViewsMaskOther>
+    _uint_view<N,N_significant,ViewsMask...>::_uint_view(const _uint_view<M,M_significant,ViewsMaskOther...>& x)
     {
-        std::copy(x.value,x.value+_uint<N,N_significant>::words_num,this->value);
+        _uint_view<N,N_significant,ViewsMask...>::uint_other<M,M_significant,ViewsMaskOther...>::copy(*this,x);
     }
 
 
-    template<uint32_t N, uint32_t N_significant>
+    /*
+        Copy assignment operator.
+        Wrapper for'copy' routine (see bellow).
+    */
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
         requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
-    _uint<N,N_significant>::_uint(_uint<N,N_significant>&& x) : _uint_view<N,N_significant>(std::forward<_uint<N,N_significant>>(x)) {}
-
-
-    template<uint32_t N, uint32_t N_significant>
-        requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
-    _uint<N,N_significant>::~_uint()
+    _uint_view<N,N_significant,ViewsMask...>& _uint_view<N,N_significant,ViewsMask...>::operator=(const _uint_view<N,N_significant,ViewsMask...>& x)
     {
-        if(this->value)
-            delete[] this->value;
+        _uint_view<N,N_significant,ViewsMask...>::uint_other<N,N_significant,ViewsMask...>::copy(*this,x);
+        return *this;
     }
 
-    template<uint32_t N, uint32_t N_significant>
+    
+    /*
+        Copy assignment operator but template.
+    */
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
         requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
-    _uint<N,N_significant>& _uint<N,N_significant>::operator=(const _uint<N,N_significant>& x)
+    template<uint32_t M, uint32_t M_significant, bool... ViewsMaskOther>
+    _uint_view<N,N_significant,ViewsMask...>& _uint_view<N,N_significant,ViewsMask...>::operator=(const _uint_view<M,M_significant,ViewsMaskOther...>& x)
     {
-        std::copy(x.value,x.value+_uint<N,N_significant>::words_num,this->value);
+        _uint_view<N,N_significant,ViewsMask...>::uint_other<M,M_significant,ViewsMaskOther...>::copy(*this,x);
         return *this;
     }
 
 
-    template<uint32_t N, uint32_t N_significant>
+    /*
+        This function performs copying from one template instance to another.
+        Does it according to 'origin's 'ViewsMask', so parts with view flag set receive data from 'other' as references.
+    */
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
         requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
-    template<uint32_t M, uint32_t M_significant>
-    _uint<N,N_significant>& _uint<N,N_significant>::operator=(const _uint_view<M,M_significant>& x)
+    template<uint32_t M, uint32_t M_significant, bool... ViewsMaskOther>
+    template<bool View, bool... ViewsMaskOtherTail>
+    void _uint_view<N,N_significant,ViewsMask...>::uint_other<M,M_significant,ViewsMaskOther...>::copy(_uint_view<N,N_significant,ViewsMask...>& origin, const _uint_view<M,M_significant,ViewsMaskOther...>& other)
     {
-        constexpr uint32_t min_significant_size = std::min(_uint<N,N_significant>::significant_words_num,_uint<M,M_significant>::significant_words_num);
-        std::copy(x.value,x.value+min_significant_size,this->value);
-        std::fill(this->value+min_significant_size,this->value+_uint<N,N_significant>::words_num,0);
-        return *this;
+        constexpr uint8_t other_tail_size = sizeof...(ViewsMaskOtherTail);
+        constexpr uint8_t other_part_i = _uint_view<M,M_significant,ViewsMaskOther...>::parts_num-other_tail_size-1;
+        constexpr uint32_t current_word_i = _uint_view<M,M_significant,ViewsMaskOther...>::parts_size*other_part_i;
+
+        if constexpr(current_word_i >= _uint_view<N,N_significant,ViewsMask...>::words_num)
+            return;
+
+        constexpr uint8_t origin_part_i = current_word_i / _uint_view<N,N_significant,ViewsMask...>::parts_size;
+        constexpr uint32_t origin_word_in_part_i = current_word_i % _uint_view<N,N_significant,ViewsMask...>::parts_size;
+
+        // This routine is able to copy from instance with any template arguments to instance with any template arguments.
+        // We copy from 'other' part-by-part and this is the number of 'origin's parts inside one 'other's part.
+        constexpr uint8_t origin_parts_in_one_other_num = std::max(_uint_view<M,M_significant,ViewsMaskOther...>::parts_size / _uint_view<N,N_significant,ViewsMask...>::parts_size,1UL);
+
+        // Checks whether 'view' flag is set for any origin parts that will be populated with values from 'other' or not.
+        // If yes, then parts must have equal sizes
+        // if no, then we can safely copy from 'other'
+        constexpr bool origin_current_view = _uint_view<N,N_significant,ViewsMask...>::any_view<origin_part_i,origin_part_i+origin_parts_in_one_other_num>();
+
+        if constexpr(origin_current_view)
+        {
+            static_assert(_uint_view<M,M_significant,ViewsMaskOther...>::parts_size == _uint_view<N,N_significant,ViewsMask...>::parts_size, "Can set view only on part with the same size.");
+            origin.value[origin_part_i] = other.value[other_part_i];
+        }
+        else
+        {
+            // Could write it in more compact form but supposed that it would be better to compile 'for' loop only when it is necessary
+            if constexpr(origin_parts_in_one_other_num == 1)
+            {
+                // If 'origin's part is equal or larger, then just copy from other
+                constexpr uint32_t part_to_copy_size = _uint_view<M,M_significant,ViewsMaskOther...>::parts_size;
+                std::copy(
+                    other.value[other_part_i],
+                    other.value[other_part_i]+part_to_copy_size,
+                    origin.value[origin_part_i]+origin_word_in_part_i
+                );
+            }
+            else
+            {
+                // If 'origin's is smaller, then
+                constexpr uint32_t part_to_copy_size = _uint_view<N,N_significant,ViewsMask...>::parts_size;
+                // This is just for debugging purposes. Number of parts is always a power of 2, hence if 'origin's part size is smaller then i
+                static_assert(origin_word_in_part_i == 0, "If origin part is smaller than copying must start at the base of its part");
+                // Iterate over 'origin's parts filling them with conten of (one) current 'other's part
+                for(uint8_t i(0); i < origin_parts_in_one_other_num; ++i)
+                {
+                    std::copy(
+                        other.value[other_part_i]+part_to_copy_size*i,
+                        other.value[other_part_i]+part_to_copy_size*(i+1),
+                        origin.value[origin_part_i+i]
+                    );
+                }
+            }
+        }
+        if constexpr(other_tail_size > 0)
+            _uint_view<N,N_significant,ViewsMask...>::uint_other<M,M_significant,ViewsMaskOther...>::copy<ViewsMaskOtherTail...>(origin,other);
     }
 
 
-    template<uint32_t N, uint32_t N_significant>
+
+    /*
+        Move constructor.
+        Wrapper for 'move'.
+        Only allowed for instances with the same template arguments
+        Could be implemented with 'for' loop. Possibly it would be even better.
+    */
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
         requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
-    _uint_view<N,N_significant>::_uint_view(const _uint_view<N,N_significant>& x)
+    _uint_view<N,N_significant,ViewsMask...>::_uint_view(_uint_view<N,N_significant,ViewsMask...>&& other)
     {
-        this->value = x.value;
+        this->move<ViewsMask...>(other);
     }
 
 
-    template<uint32_t N, uint32_t N_significant>
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
         requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
-    _uint_view<N,N_significant>::_uint_view(_uint_view<N,N_significant>&& x)
+    template<bool View, bool... ViewsMaskTail>
+    void _uint_view<N,N_significant,ViewsMask...>::move(_uint_view<N,N_significant,ViewsMask...>&& other)
     {
-        this->value = x.value;
-        x.value = nullptr;
+        constexpr uint8_t tail_size = sizeof...(ViewsMaskTail);
+        constexpr uint8_t part_i = _uint_view<N,N_significant,ViewsMask...>::parts_num-tail_size-1;
+        this->value[part_i] = other.value[part_i];
+        other.value[part_i] = nullptr;
+        if constexpr(tail_size > 0)
+            this->move<ViewsMaskTail...>(other);
     }
 
 
-    template<uint32_t N, uint32_t N_significant>
-        requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
-    _uint_view<N,N_significant>::_uint_view(uint16_t *ptr) : value(ptr) {}
 
-
-    template<uint32_t N, uint32_t N_significant>
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
         requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
-    template<uint32_t DENOMINATOR, uint32_t NUMENATOR>
-    uint16_t *_uint_view<N,N_significant>::get_part_view()
+    template<uint32_t part_i>
+    uint16_t *_uint_view<N,N_significant,ViewsMask...>::get_part_view()
     {
-        constexpr uint32_t part_size = _uint<N,N_significant>::words_num / DENOMINATOR;
-        static_assert(part_size <= _uint_view<N,N_significant>::words_num and NUMENATOR <= (_uint<N,N_significant>::words_num-part_size) and __globals::is_power_2(DENOMINATOR));
-        constexpr uint32_t offset = (_uint_view<N,N_significant>::words_num / DENOMINATOR) * NUMENATOR;
-        return this->value + NUMENATOR;
+        constexpr uint8_t parts_total = sizeof...(ViewsMask);
+        static_assert(part_i < parts_total, "Part index out of range");
+
+        constexpr uint32_t view_bits = _uint_view<N,N_significant,ViewsMask...>::parts_size_bits;
+        constexpr uint32_t view_significant_bits = _uint_view<N,N_significant,ViewsMask...>::significant_words_in_part(part_i);
+
+        return _uint_view<view_bits,view_significant_bits,true>(std::pair<_uint_view<N,N_significant,ViewsMask...>,uint8_t>{*this,part_i});
     }
 
 
-    template<uint32_t N, uint32_t N_significant>
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
         requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
-    template<uint32_t DENOMINATOR, uint32_t NUMENATOR>
-    const uint16_t *_uint_view<N,N_significant>::get_part_view() const
+    template<uint32_t part_i>
+    const uint16_t *_uint_view<N,N_significant,ViewsMask...>::get_part_view() const
     {
-        constexpr uint32_t part_size = _uint<N,N_significant>::words_num / DENOMINATOR;
-        static_assert(part_size <= _uint<N,N_significant>::words_num and NUMENATOR <= (_uint<N,N_significant>::words_num-part_size) and __globals::is_power_2(DENOMINATOR));
-        constexpr uint32_t offset = (_uint<N,N_significant>::words_num / DENOMINATOR) * NUMENATOR;
-        return this->value + NUMENATOR;
+        constexpr uint8_t parts_total = sizeof...(ViewsMask);
+        static_assert(part_i < parts_total, "Part index out of range");
+
+        constexpr uint32_t view_bits = _uint_view<N,N_significant,ViewsMask...>::parts_size_bits;
+        constexpr uint32_t view_significant_bits = _uint_view<N,N_significant,ViewsMask...>::significant_words_in_part(part_i);
+
+        return _uint_view<view_bits,view_significant_bits,true>(std::pair<_uint_view<N,N_significant,ViewsMask...>,uint8_t>{*this,part_i});
     }
 
 

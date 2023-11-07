@@ -85,6 +85,9 @@ namespace lrf
         template<uint8_t ViewInd, bool View, bool... ViewsMaskTail>
         static constexpr bool get_view();
 
+        template<uint8_t ViewIndBegin, uint8_t ViewIndEnd, bool View, bool... ViewsMaskTail>
+        static constexpr bool any_view();
+
         static constexpr uint32_t significant_words_in_part(uint8_t part_i);
 
         template<uint32_t M, uint32_t M_significant, bool... ViewsMaskOther>
@@ -103,6 +106,9 @@ namespace lrf
 
         template<uint8_t ViewInd>
         static constexpr bool get_view();
+
+        template<uint8_t ViewIndBegin, uint8_t ViewIndEnd>
+        static constexpr bool any_view();
 
         _uint_view();
     public:
@@ -165,19 +171,12 @@ namespace lrf
         bool operator==(const _uint_view<M,M_significant,ViewsMaskOther...>& x) const;
     };
 
-    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
-        requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
-    template<bool View, bool... ViewsMaskTail>
-    void _uint_view<N,N_significant,ViewsMask...>::destroy()
-    {
-        constexpr uint8_t tail_size = sizeof...(ViewsMaskTail);
-        constexpr uint8_t part_i = parts_num-tail_size-1;
-        if(!View)
-            delete[] this->value[part_i];
-        if constexpr(tail_size > 0)
-            this->destroy<ViewsMaskTail...>();
-    }
 
+
+    /*
+        This function performs copying from one template instance to another.
+        Does it according to 'origin's 'ViewsMask', so parts with view flag set receive data from 'other' as references.
+    */
     template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
         requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
     template<uint32_t M, uint32_t M_significant, bool... ViewsMaskOther>
@@ -185,7 +184,7 @@ namespace lrf
     void _uint_view<N,N_significant,ViewsMask...>::uint_other<M,M_significant,ViewsMaskOther...>::copy(_uint_view<N,N_significant,ViewsMask...>& origin, const _uint_view<M,M_significant,ViewsMaskOther...>& other)
     {
         constexpr uint8_t other_tail_size = sizeof...(ViewsMaskOtherTail);
-        constexpr uint8_t other_part_i = parts_num-other_tail_size-1;
+        constexpr uint8_t other_part_i = _uint_view<M,M_significant,ViewsMaskOther...>::parts_num-other_tail_size-1;
         constexpr uint32_t current_word_i = _uint_view<M,M_significant,ViewsMaskOther...>::parts_size*other_part_i;
 
         if constexpr(current_word_i >= _uint_view<N,N_significant,ViewsMask...>::words_num)
@@ -193,11 +192,16 @@ namespace lrf
 
         constexpr uint8_t origin_part_i = current_word_i / _uint_view<N,N_significant,ViewsMask...>::parts_size;
         constexpr uint32_t origin_word_in_part_i = current_word_i % _uint_view<N,N_significant,ViewsMask...>::parts_size;
-        constexpr bool origin_current_view = _uint_view<N,N_significant,ViewsMask...>::get_view<origin_part_i>();
-        constexpr uint32_t words_can_be_copied = std::min(
-                                                    _uint_view<N,N_significant,ViewsMask...>::words_num - current_word_i,
-                                                    _uint_view<M,M_significant,ViewsMaskOther...>::parts_size
-                                                );
+
+        // This routine is able to copy from instance with any template arguments to instance with any template arguments.
+        // We copy from 'other' part-by-part and this is the number of 'origin's parts inside one 'other's part.
+        constexpr uint8_t origin_parts_in_one_other_num = std::max(_uint_view<M,M_significant,ViewsMaskOther...>::parts_size / _uint_view<N,N_significant,ViewsMask...>::parts_size,1UL);
+
+        // Checks whether 'view' flag is set for any origin parts that will be populated with values from 'other' or not.
+        // If yes, then parts must have equal sizes
+        // if no, then we can safely copy from 'other'
+        constexpr bool origin_current_view = _uint_view<N,N_significant,ViewsMask...>::any_view<origin_part_i,origin_part_i+origin_parts_in_one_other_num>();
+
         if constexpr(origin_current_view)
         {
             static_assert(_uint_view<M,M_significant,ViewsMaskOther...>::parts_size == _uint_view<N,N_significant,ViewsMask...>::parts_size, "Can set view only on part with the same size.");
@@ -205,10 +209,11 @@ namespace lrf
         }
         else
         {
-            constexpr uint8_t origin_parts_in_one_other_num = words_can_be_copied / _uint_view<N,N_significant,ViewsMask...>::parts_size;
-            if constexpr(origin_parts_in_one_other_num <= 1)
+            // Could write it in more compact form but supposed that it would be better to compile 'for' loop only when it is necessary
+            if constexpr(origin_parts_in_one_other_num == 1)
             {
-                constexpr uint32_t part_to_copy_size = words_can_be_copied;
+                // If 'origin's part is equal or larger, then just copy from other
+                constexpr uint32_t part_to_copy_size = _uint_view<M,M_significant,ViewsMaskOther...>::parts_size;
                 std::copy(
                     other.value[other_part_i],
                     other.value[other_part_i]+part_to_copy_size,
@@ -217,13 +222,17 @@ namespace lrf
             }
             else
             {
+                // If 'origin's is smaller, then
                 constexpr uint32_t part_to_copy_size = _uint_view<N,N_significant,ViewsMask...>::parts_size;
+                // This is just for debugging purposes. Number of parts is always a power of 2, hence if 'origin's part size is smaller then i
+                static_assert(origin_word_in_part_i == 0, "If origin part is smaller than copying must start at the base of its part");
+                // Iterate over 'origin's parts filling them with conten of (one) current 'other's part
                 for(uint8_t i(0); i < origin_parts_in_one_other_num; ++i)
                 {
                     std::copy(
-                        other.value[other_part_i],
-                        other.value[other_part_i]+part_to_copy_size,
-                        origin.value[origin_part_i]+origin_word_in_part_i
+                        other.value[other_part_i]+part_to_copy_size*i,
+                        other.value[other_part_i]+part_to_copy_size*(i+1),
+                        origin.value[origin_part_i+i]
                     );
                 }
             }
@@ -302,6 +311,42 @@ namespace lrf
     {
         static_assert(ViewInd < _uint_view<N,N_significant,ViewsMask...>::parts_num,"Index out of range");
         return _uint_view<N,N_significant,ViewsMask...>::get_view<ViewInd,ViewsMask...>();
+    }
+
+
+    /*
+        These two static functions check if at least one entry in 'ViewsMask' is 'true'.
+        First one is private and should only be used wrapped with second one, which only takes indices as arguments.
+    */
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
+        requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
+    template<uint8_t ViewIndBegin, uint8_t ViewIndEnd, bool View, bool... ViewsMaskTail>
+    constexpr bool _uint_view<N,N_significant,ViewsMask...>::any_view()
+    {
+        static_assert(ViewIndBegin < _uint_view<N,N_significant,ViewsMask...>::parts_num,"Begin index out of range");
+        static_assert(ViewIndEnd <= _uint_view<N,N_significant,ViewsMask...>::parts_num,"End index out of range");
+        static_assert(ViewIndBegin <= ViewIndEnd,"Begin index must be not greater than end.");
+        constexpr uint8_t tail_size = sizeof...(ViewsMaskTail);
+        constexpr uint8_t curr_part_i = _uint_view<N,N_significant,ViewsMask...>::parts_num-tail_size-1;
+        if constexpr(curr_part_i >= ViewIndBegin)
+        {
+            if constexpr(curr_part_i >= ViewIndEnd)
+                return false;
+            if constexpr(View)
+                return true;
+        }
+        return _uint_view<N,N_significant,ViewsMask...>::any_view<ViewIndBegin,ViewIndEnd,ViewsMaskTail...>();
+    }
+
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
+        requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
+    template<uint8_t ViewIndBegin, uint8_t ViewIndEnd>
+    constexpr bool _uint_view<N,N_significant,ViewsMask...>::any_view()
+    {
+        static_assert(ViewIndBegin < _uint_view<N,N_significant,ViewsMask...>::parts_num,"Begin index out of range.");
+        static_assert(ViewIndEnd <= _uint_view<N,N_significant,ViewsMask...>::parts_num,"End index out of range.");
+        static_assert(ViewIndBegin <= ViewIndEnd,"Begin index must be not greater than end.");
+        return _uint_view<N,N_significant,ViewsMask...>::any_view<ViewIndBegin,ViewIndEnd,ViewsMask...>();
     }
 
 
@@ -521,11 +566,35 @@ namespace lrf
 
     // === END 'init' FUNCTIONS COLLECTION ===
 
+
+
+    /*
+        Destructor.
+        Basically, a wrapper for 'destroy' that handles 'ViewsMask' unrolling.
+    */
     template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
         requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
     _uint_view<N,N_significant,ViewsMask...>::~_uint_view()
     {
         this->destroy<ViewsMask...>();
+    }
+
+
+    /*
+        Unrolls 'ViewsMask' and for every 'false' ("not a view") entry in it deletes corresponding part.
+        This ensures that only owned memory will be destroyed.
+    */
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
+        requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
+    template<bool View, bool... ViewsMaskTail>
+    void _uint_view<N,N_significant,ViewsMask...>::destroy()
+    {
+        constexpr uint8_t tail_size = sizeof...(ViewsMaskTail);
+        constexpr uint8_t part_i = parts_num-tail_size-1;
+        if(!View)
+            delete[] this->value[part_i];
+        if constexpr(tail_size > 0)
+            this->destroy<ViewsMaskTail...>();
     }
 
 

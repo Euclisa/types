@@ -76,6 +76,9 @@ namespace lrf
         template<uint32_t M, uint32_t M_significant, bool... ViewMaskOther>
         void init(ViewRefStorage<true,std::pair<_uint_view<M,M_significant,ViewMaskOther...>,uint8_t>> other, uint8_t part_i) requires(_uint_view<M,M_significant,ViewMaskOther...>::parts_size == _uint_view<N,N_significant,ViewsMask...>::words_num);
 
+        template<uint32_t M, uint32_t M_significant, bool... ViewMaskOther>
+        void init(ViewRefStorage<false,std::pair<_uint_view<M,M_significant,ViewMaskOther...>,uint8_t>> other, uint8_t part_i) requires(_uint_view<M,M_significant,ViewMaskOther...>::parts_size == _uint_view<N,N_significant,ViewsMask...>::words_num);
+
         template<bool View, bool... ViewsMaskTail>
         void destroy();
 
@@ -93,8 +96,9 @@ namespace lrf
 
         template<uint8_t ViewIndBegin, uint8_t ViewIndEnd, bool View, bool... ViewsMaskTail>
         static constexpr bool any_view();
-
+        
         static constexpr uint32_t significant_words_in_part(uint8_t part_i);
+        static constexpr uint32_t significant_bits_in_part(uint8_t part_i);
 
         template<uint32_t M, uint32_t M_significant, bool... ViewsMaskOther>
         struct uint_other
@@ -108,7 +112,8 @@ namespace lrf
 
     protected:
         uint16_t& at(uint32_t i);
-        uint16_t atc(uint32_t i);
+        const uint16_t& at(uint32_t i) const;
+        uint16_t atc(uint32_t i) const;
 
         template<uint8_t ViewInd>
         static constexpr bool get_view();
@@ -120,10 +125,16 @@ namespace lrf
     public:
         uint16_t **value;
 
+        template<uint8_t part_i>
+        using _uint_part_view_t = _uint_view<_uint_view<N,N_significant,ViewsMask...>::parts_size_bits,_uint_view<N,N_significant,ViewsMask...>::significant_bits_in_part(part_i),true>;
+
+        template<uint8_t part_i>
+        using _uint_part_copy_t = _uint_view<_uint_view<N,N_significant,ViewsMask...>::parts_size_bits,_uint_view<N,N_significant,ViewsMask...>::significant_bits_in_part(part_i),false>;
+
         template<uint32_t part_i>
-        uint16_t *get_part_view();
+        _uint_part_view_t<part_i> get_part_view();
         template<uint32_t part_i>
-        const uint16_t *get_part_view() const;
+        _uint_part_copy_t<part_i> get_part_view() const;
 
         template<typename... InitArgs>
         _uint_view(InitArgs... args);
@@ -136,7 +147,7 @@ namespace lrf
         ~_uint_view();
 
         template<uint32_t M, uint32_t M_significant>
-        operator _uint_view<M,M_significant,ViewsMask...>() const;
+        operator _uint_view<M,M_significant,false>() const;
 
         operator std::string() const;
 
@@ -208,7 +219,7 @@ namespace lrf
     }
 
     /*
-        Service function that resolves absolute index to pair (part_index, word_inside_part_index) and outputs refernce to corresponding word.
+        Service function that resolves absolute index to pair (part_index, word_inside_part_index) and returns refernce to corresponding word.
     */
     template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
         requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
@@ -218,11 +229,21 @@ namespace lrf
     }
 
     /*
-        Same as above but returns a copy.
+        Service function that resolves absolute index to pair (part_index, word_inside_part_index) and returns refernce to corresponding word.
     */
     template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
         requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
-    uint16_t _uint_view<N,N_significant,ViewsMask...>::atc(uint32_t i)
+    const uint16_t& _uint_view<N,N_significant,ViewsMask...>::at(uint32_t i) const
+    {
+        return this->value[i/this->parts_size][i%this->parts_size];
+    }
+
+    /*
+        Service function that resolves absolute index to pair (part_index, word_inside_part_index) and returns a copy to corresponding word.
+    */
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
+        requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
+    uint16_t _uint_view<N,N_significant,ViewsMask...>::atc(uint32_t i) const
     {
         return this->value[i/this->parts_size][i%this->parts_size];
     }
@@ -230,8 +251,8 @@ namespace lrf
 
 
     /*
-        These two static functions are used to get a particular element of 'ViewsMask'.
-        First one is private and should only be used wrapped with second one, which only takes index as an argument.
+        Returns a particular element of 'ViewsMask'.
+        Private and should only be used wrapped with one beneath.
     */
     template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
         requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
@@ -246,6 +267,9 @@ namespace lrf
         return _uint_view<N,N_significant,ViewsMask...>::get_view<ViewInd,ViewsMaskTail...>();
     }
 
+    /*
+        Returns a particular element of 'ViewsMask'.
+    */
     template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
         requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
     template<uint8_t ViewInd>
@@ -257,8 +281,8 @@ namespace lrf
 
 
     /*
-        These two static functions check if at least one entry in 'ViewsMask' is 'true'.
-        First one is private and should only be used wrapped with second one, which only takes indices as arguments.
+        Checks if at least one entry in 'ViewsMask' is 'true'.
+        Private and should only be used wrapped with one beneath.
     */
     template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
         requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
@@ -280,6 +304,9 @@ namespace lrf
         return _uint_view<N,N_significant,ViewsMask...>::any_view<ViewIndBegin,ViewIndEnd,ViewsMaskTail...>();
     }
 
+    /*
+        Checks if at least one entry in 'ViewsMask' is 'true'.
+    */
     template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
         requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
     template<uint8_t ViewIndBegin, uint8_t ViewIndEnd>
@@ -304,6 +331,19 @@ namespace lrf
             (int64_t)_uint_view<N,N_significant,ViewsMask...>::significant_words_num - (int64_t)_uint_view<N,N_significant,ViewsMask...>::parts_size*part_i,
             0L
             );
+    }
+
+    /*
+        Service static function that returns number of significant bits in the particular part (with index 'part_i')
+    */
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
+        requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
+    constexpr uint32_t _uint_view<N,N_significant,ViewsMask...>::significant_bits_in_part(uint8_t part_i)
+    {
+        return std::max(
+            (int64_t)_uint_view<N,N_significant,ViewsMask...>::significant_words_num - (int64_t)_uint_view<N,N_significant,ViewsMask...>::parts_size*part_i,
+            0L
+            ) * _uint_view<N,N_significant,ViewsMask...>::word_bits;
     }
 
 
@@ -353,7 +393,7 @@ namespace lrf
     template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
         requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
     template<typename... InitArgs>
-    _uint_view<N,N_significant,ViewsMask...>::_uint_view(InitArgs... args)
+    _uint_view<N,N_significant,ViewsMask...>::_uint_view(InitArgs... args) : _uint_view()
     {
         this->init(ViewRefStorage<ViewsMask,__globals::unqualified_t<InitArgs>>(args)...);
     }
@@ -506,6 +546,10 @@ namespace lrf
         }
     }
 
+    /*
+        Initialization of a 'part_i' part from another instance and part index.
+        Constructed instance is a view on a corresponding part of given instance.
+    */
     template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
         requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
     template<uint32_t M, uint32_t M_significant, bool... ViewMaskOther>
@@ -515,6 +559,21 @@ namespace lrf
         constexpr uint32_t significant_words_in_part_other = _uint_view<M,M_significant,ViewMaskOther...>::significant_words_in_part(part_i);
         static_assert(significant_words_in_curr_part <= significant_words_in_part_other, "Can't set view on instance with number of significant words less than in current part.");
         this->value[part_i] = other.value.first.value[other.value.second];
+    }
+
+    /*
+        Initialization of a 'part_i' part from another instance and part index.
+        Constructed instance is a copy of a corresponding part of given instance.
+    */
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
+        requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
+    template<uint32_t M, uint32_t M_significant, bool... ViewMaskOther>
+    void _uint_view<N,N_significant,ViewsMask...>::init(ViewRefStorage<false,std::pair<_uint_view<M,M_significant,ViewMaskOther...>,uint8_t>> other, uint8_t part_i) requires(_uint_view<M,M_significant,ViewMaskOther...>::parts_size == _uint_view<N,N_significant,ViewsMask...>::words_num)
+    {
+        constexpr uint32_t significant_words_in_curr_part = _uint_view<N,N_significant,ViewsMask...>::significant_words_in_part(part_i);
+        constexpr uint32_t significant_words_in_part_other = _uint_view<M,M_significant,ViewMaskOther...>::significant_words_in_part(part_i);
+        constexpr uint32_t significant_words_to_copy = std::min(significant_words_in_curr_part,significant_words_in_part_other);
+        std::copy(other.value.first.value[other.value.second],other.value.first.value[other.value.second]+significant_words_to_copy,this->value[part_i]);
     }
 
     // === END 'init' FUNCTIONS COLLECTION ===
@@ -559,7 +618,7 @@ namespace lrf
         requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
     _uint_view<N,N_significant,ViewsMask...>::_uint_view(const _uint_view<N,N_significant,ViewsMask...>& x)
     {
-        _uint_view<N,N_significant,ViewsMask...>::uint_other<N,N_significant,ViewsMask...>::copy(*this,x);
+        _uint_view<N,N_significant,ViewsMask...>::template uint_other<N,N_significant,ViewsMask...>::template copy(*this,x);
     }
 
 
@@ -571,7 +630,7 @@ namespace lrf
     template<uint32_t M, uint32_t M_significant, bool... ViewsMaskOther>
     _uint_view<N,N_significant,ViewsMask...>::_uint_view(const _uint_view<M,M_significant,ViewsMaskOther...>& x)
     {
-        _uint_view<N,N_significant,ViewsMask...>::uint_other<M,M_significant,ViewsMaskOther...>::copy(*this,x);
+        _uint_view<N,N_significant,ViewsMask...>::template uint_other<M,M_significant,ViewsMaskOther...>::template copy<ViewsMaskOther...>(*this,x);
     }
 
 
@@ -583,7 +642,7 @@ namespace lrf
         requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
     _uint_view<N,N_significant,ViewsMask...>& _uint_view<N,N_significant,ViewsMask...>::operator=(const _uint_view<N,N_significant,ViewsMask...>& x)
     {
-        _uint_view<N,N_significant,ViewsMask...>::uint_other<N,N_significant,ViewsMask...>::copy(*this,x);
+        _uint_view<N,N_significant,ViewsMask...>::template uint_other<N,N_significant,ViewsMask...>::template copy<ViewsMask...>(*this,x);
         return *this;
     }
 
@@ -596,7 +655,7 @@ namespace lrf
     template<uint32_t M, uint32_t M_significant, bool... ViewsMaskOther>
     _uint_view<N,N_significant,ViewsMask...>& _uint_view<N,N_significant,ViewsMask...>::operator=(const _uint_view<M,M_significant,ViewsMaskOther...>& x)
     {
-        _uint_view<N,N_significant,ViewsMask...>::uint_other<M,M_significant,ViewsMaskOther...>::copy(*this,x);
+        _uint_view<N,N_significant,ViewsMask...>::template uint_other<M,M_significant,ViewsMaskOther...>::template copy(*this,x);
         return *this;
     }
 
@@ -685,6 +744,9 @@ namespace lrf
     }
 
 
+    /*
+        Just moves content from 'other' to 'this' regardless 'ViewsMask'.
+    */
     template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
         requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
     template<bool View, bool... ViewsMaskTail>
@@ -699,11 +761,14 @@ namespace lrf
     }
 
 
-
+    /*
+        Returns actual view on a part of non-const instance, so one can edit actual part through acquired uint instance.
+    */
     template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
         requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
     template<uint32_t part_i>
-    uint16_t *_uint_view<N,N_significant,ViewsMask...>::get_part_view()
+    _uint_view<N,N_significant,ViewsMask...>::_uint_part_view_t<part_i>
+    _uint_view<N,N_significant,ViewsMask...>::get_part_view()
     {
         constexpr uint8_t parts_total = sizeof...(ViewsMask);
         static_assert(part_i < parts_total, "Part index out of range");
@@ -711,14 +776,17 @@ namespace lrf
         constexpr uint32_t view_bits = _uint_view<N,N_significant,ViewsMask...>::parts_size_bits;
         constexpr uint32_t view_significant_bits = _uint_view<N,N_significant,ViewsMask...>::significant_words_in_part(part_i);
 
-        return _uint_view<view_bits,view_significant_bits,true>(std::pair<_uint_view<N,N_significant,ViewsMask...>,uint8_t>{*this,part_i});
+        return _uint_part_view_t<part_i>(std::pair<_uint_view<N,N_significant,ViewsMask...>,uint8_t>{*this,part_i});
     }
 
-
+    /*
+        Returns copy of part of const instance.
+    */
     template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
         requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
     template<uint32_t part_i>
-    const uint16_t *_uint_view<N,N_significant,ViewsMask...>::get_part_view() const
+    _uint_view<N,N_significant,ViewsMask...>::_uint_part_copy_t<part_i> 
+    _uint_view<N,N_significant,ViewsMask...>::get_part_view() const
     {
         constexpr uint8_t parts_total = sizeof...(ViewsMask);
         static_assert(part_i < parts_total, "Part index out of range");
@@ -726,25 +794,31 @@ namespace lrf
         constexpr uint32_t view_bits = _uint_view<N,N_significant,ViewsMask...>::parts_size_bits;
         constexpr uint32_t view_significant_bits = _uint_view<N,N_significant,ViewsMask...>::significant_words_in_part(part_i);
 
-        return _uint_view<view_bits,view_significant_bits,true>(std::pair<_uint_view<N,N_significant,ViewsMask...>,uint8_t>{*this,part_i});
+        return _uint_part_copy_t<part_i>(std::pair<_uint_view<N,N_significant,ViewsMask...>,uint8_t>{*this,part_i});
     }
 
 
-    template<uint32_t N, uint32_t N_significant>
+    /*
+        Casts instance to another with another shape and one non-view part
+    */
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
         requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
     template<uint32_t M, uint32_t M_significant>
-    _uint_view<N,N_significant>::operator _uint<M,M_significant>() const
+    _uint_view<N,N_significant,ViewsMask...>::operator _uint_view<M,M_significant,false>() const
     {
-        _uint<M,M_significant> res;
-        constexpr uint32_t min_significant_bits = std::min(_uint<N,N_significant>::significant_words_num,_uint<M,M_significant>::significant_words_num);
+        _uint_view<M,M_significant,false> res;
+        constexpr uint32_t min_significant_bits = std::min(_uint_view<N,N_significant,ViewsMask...>::significant_words_num,_uint_view<M,M_significant,false>::significant_words_num);
         for(uint32_t i(0); i < min_significant_bits; ++i)
-            res.value[i] = this->value[i];
-        std::fill(res.value+min_significant_bits,res.value+_uint<M,M_significant>::words_num,0);
+            res.at(i) = this->atc(i);
+        std::fill(res.value[0]+min_significant_bits,res.value[0]+_uint_view<M,M_significant,false>::words_num,0);
 
         return res;
     }
 
 
+    /*
+        Returns a string with all zeros on the left removed.
+    */
     std::string ltrim(const std::string &s)
     {
         size_t start = s.find_first_not_of("0");
@@ -752,17 +826,20 @@ namespace lrf
     }
 
 
-    template<uint32_t N, uint32_t N_significant>
+    /*
+        Converts the instance to hex-string.
+    */
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
         requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
-    _uint_view<N,N_significant>::operator std::string() const
+    _uint_view<N,N_significant,ViewsMask...>::operator std::string() const
     {
         std::string res;
-        for(int i(_uint<N,N_significant>::significant_words_num-1); i >= 0; --i)
+        for(int i(_uint_view<N,N_significant,ViewsMask...>::significant_words_num-1); i >= 0; --i)
         {
             std::stringstream stream;
             stream.fill('0');
-            stream.width(_uint<N,N_significant>::word_bits/4);
-            stream <<  std::hex << this->value[i];
+            stream.width(_uint_view<N,N_significant,ViewsMask...>::word_bits/4);
+            stream <<  std::hex << this->atc[i];
             res += stream.str();
         }
         res = ltrim(res);
@@ -771,125 +848,146 @@ namespace lrf
     }
 
 
-    template<uint32_t N, uint32_t N_significant>
+    /*
+        Checks if 'this' and another instance are equal.
+    */
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
         requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
-    template<uint32_t M, uint32_t M_significant>
-    bool _uint_view<N,N_significant>::operator==(const _uint_view<M,M_significant>& x) const
+    template<uint32_t M, uint32_t M_significant, bool... ViewsMaskOther>
+    bool _uint_view<N,N_significant,ViewsMask...>::operator==(const _uint_view<M,M_significant,ViewsMaskOther...>& other) const
     {
         bool res = false;
-        uint32_t min_size = std::min(_uint<N,N_significant>::significant_words_num,_uint<M,M_significant>::significant_words_num);
-        bool common_part_is_equal = std::equal(this->value,this->value+min_size,x.value);
-        bool none_after_common_1 = std::none_of(this->value+min_size,this->value+_uint<N,N_significant>::significant_words_num,[](uint16_t arg) { return arg; });
-        bool none_after_common_2 = std::none_of(x.value+min_size,x.value+_uint_view<M,M_significant>::significant_words_num,[](uint16_t arg) { return arg; });
+        constexpr uint32_t common_part_size = std::min(_uint_view<N,N_significant,ViewsMask...>::significant_words_num,_uint_view<M,M_significant,ViewsMaskOther...>::significant_words_num);
+        // Check if common significant part is equal
+        bool common_part_is_equal = true;
+        for(uint32_t i(0); i < common_part_size; ++i)
+        {
+            if(other.at(i) != this->at(i))
+            {
+                common_part_is_equal = false;
+                break;
+            }
+        }
+        // Check if in the current instance there are no non-zero values after common significant part
+        bool none_after_common_1 = true;
+        for(uint32_t i(common_part_size); i < _uint_view<N,N_significant,ViewsMask...>::significant_words_num; ++i)
+        {
+            if(this->at(i))
+            {
+                none_after_common_1 = false;
+                break;
+            }
+        }
+        // Check if in anohter instance there are no non-zero values after common significant part
+        bool none_after_common_2 = true;
+        for(uint32_t i(common_part_size); i < _uint_view<M,M_significant,ViewsMaskOther...>::significant_words_num; ++i)
+        {
+            if(other.at(i))
+            {
+                none_after_common_1 = false;
+                break;
+            }
+        }
         return common_part_is_equal and none_after_common_1 and none_after_common_2;
     }
 
 
-    template<uint32_t N, uint32_t N_significant>
+    /*
+        Performs addition of 'this' and another template instance in-place.
+    */
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
         requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
-    _uint_view<N,N_significant>& _uint_view<N,N_significant>::operator=(const _uint_view<N,N_significant>& x)
-    {
-        this->value = x.value;
-        return *this;
-    }
-
-    template<uint32_t N, uint32_t N_significant>
-        requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
-    template<uint32_t M, uint32_t M_significant>
-    _uint_view<N,N_significant>& _uint_view<N,N_significant>::operator=(const _uint_view<M,M_significant>& x)
-    {
-        static_assert(M >= N);
-        this->value = x.value;
-        return *this;
-    }
-
-
-    template<uint32_t N, uint32_t N_significant>
-        requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
-    template<uint32_t M, uint32_t M_significant>
-    _uint_view<N,N_significant>& _uint_view<N,N_significant>::operator+=(const _uint_view<M,M_significant>& b) requires(N_significant == N)
+    template<uint32_t M, uint32_t M_significant, bool... ViewsMaskOther>
+    _uint_view<N,N_significant,ViewsMask...>& _uint_view<N,N_significant,ViewsMask...>::operator+=(const _uint_view<M,M_significant,ViewsMaskOther...>& b) requires(N_significant == N)
     {
         uint16_t r = 0;
-        constexpr uint32_t significant_ops = std::min(_uint<N,N_significant>::significant_words_num,_uint<M,M_significant>::significant_words_num);
+        constexpr uint32_t significant_ops = std::min(_uint_view<N,N_significant,ViewsMask...>::significant_words_num,_uint_view<M,M_significant,ViewsMaskOther...>::significant_words_num);
         for(uint32_t i = 0; i < significant_ops; ++i)
         {
-            uint32_t word_sum = (uint32_t)this->value[i] + (uint32_t)b.value[i] + (uint32_t)r;
-            this->value[i] = word_sum & uint16_t(0xffff);
-            r = word_sum >> _uint<N,N_significant>::word_bits;
+            uint32_t word_sum = (uint32_t)this->at(i) + (uint32_t)b.at(i) + (uint32_t)r;
+            this->at(i) = word_sum & uint16_t(0xffff);
+            r = word_sum >> _uint_view<N,N_significant,ViewsMask...>::word_bits;
         }
-        for(uint32_t i = significant_ops; i < _uint<N,N_significant>::words_num; ++i)
+        for(uint32_t i = significant_ops; i < _uint_view<N,N_significant,ViewsMask...>::words_num; ++i)
         {
             if(r == 0)
                 break;
-            uint32_t word_sum = (uint32_t)this->value[i] + (uint32_t)r;
-            this->value[i] = word_sum & uint16_t(0xffff);
-            r = word_sum >> _uint<N,N_significant>::word_bits;
+            uint32_t word_sum = (uint32_t)this->at(i) + (uint32_t)r;
+            this->at(i) = word_sum & uint16_t(0xffff);
+            r = word_sum >> _uint_view<N,N_significant,ViewsMask...>::word_bits;
         }
 
         return *this;
     }
 
 
-    template<uint32_t N, uint32_t N_significant>
+    /*
+        Performs subtraction of 'this' and another template instance in-place.
+    */
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
         requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
-    template<uint32_t M, uint32_t M_significant>
-    _uint_view<N,N_significant>& _uint_view<N,N_significant>::operator-=(const _uint_view<M,M_significant>& b) requires(N_significant == N)
+    template<uint32_t M, uint32_t M_significant, bool... ViewsMaskOther>
+    _uint_view<N,N_significant,ViewsMask...>& _uint_view<N,N_significant,ViewsMask...>::operator-=(const _uint_view<M,M_significant,ViewsMaskOther...>& b) requires(N_significant == N)
     {
         uint16_t r = 0;
-        constexpr uint32_t significant_ops = std::min(_uint<N,N_significant>::significant_words_num,_uint<M,M_significant>::significant_words_num);
+        constexpr uint32_t significant_ops = std::min(_uint_view<N,N_significant,ViewsMask...>::significant_words_num,_uint_view<M,M_significant,ViewsMaskOther...>::significant_words_num);
         for(uint32_t i(0); i < significant_ops; ++i)
         {
-            uint32_t sub_total = (uint32_t)b.value[i] + (uint32_t)r;
-            r = sub_total > this->value[i] ? 1 : 0;
-            this->value[i] = ((uint32_t)(r ? _uint_view<N,N_significant>::base : 0) - (uint32_t)sub_total) + (uint32_t)this->value[i];
+            uint32_t sub_total = (uint32_t)b.at(i) + (uint32_t)r;
+            r = sub_total > this->at(i) ? 1 : 0;
+            this->at(i) = ((uint32_t)(r ? _uint_view<N,N_significant,ViewsMask...>::base : 0) - (uint32_t)sub_total) + (uint32_t)this->at(i);
         }
-        uint32_t i = significant_ops;
-        for(; i < _uint_view<N>::words_num; ++i)
+        for(uint32_t i(significant_ops); i < _uint_view<N,N_significant,ViewsMask...>::words_num; ++i)
         {
             if(r == 0)
                 break;
             uint32_t sub_total = (uint32_t)r;
-            r = sub_total > this->value[i] ? 1 : 0;
-            this->value[i] = ((uint32_t)(r ? _uint_view<N,N_significant>::base : 0) - (uint32_t)sub_total) + (uint32_t)this->value[i];
+            r = sub_total > this->at(i) ? 1 : 0;
+            this->at(i) = ((uint32_t)(r ? _uint_view<N,N_significant,ViewsMask...>::base : 0) - (uint32_t)sub_total) + (uint32_t)this->at(i);
         }
 
         return *this;
     }
 
 
-    template<uint32_t N, uint32_t N_significant>
+    /*
+        Performs multiplication of 'this' and another template instance in-place using school-grade algorithm.
+    */
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
         requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
-    template<uint32_t M, uint32_t M_significant>
-    _uint_view<N,N_significant>& _uint_view<N,N_significant>::operator*=(const _uint_view<M,M_significant>& b) requires(N < __globals::karatsuba_bound and N_significant == N)
+    template<uint32_t M, uint32_t M_significant, bool... ViewsMaskOther>
+    _uint_view<N,N_significant,ViewsMask...>& _uint_view<N,N_significant,ViewsMask...>::operator*=(const _uint_view<M,M_significant,ViewsMaskOther...>& other) requires(N < __globals::karatsuba_bound and N_significant == N)
     {
-        uint64_t pseudo_res[_uint<N*2,N_significant*2>::words_num];
-        pseudo_res[_uint<2*N,2*N_significant>::words_num-1] = 0;
-        std::fill(pseudo_res,pseudo_res+_uint<N*2,N_significant*2>::words_num,0);
-        constexpr uint32_t significant_ops = std::min(_uint<2*N,2*N_significant>::words_num,
-                                            _uint<2*N,2*N_significant>::significant_words_num+_uint<2*M,2*M_significant>::significant_words_num);
-        for(uint32_t i(0); i < significant_ops-1; ++i)
+        constexpr uint32_t res_words_num = _uint_view<N,N_significant,ViewsMask...>::words_num;
+        uint64_t pseudo_res[_uint_view<N,N_significant,ViewsMask...>::words_num];
+        std::fill(pseudo_res,pseudo_res+_uint_view<N,N_significant,ViewsMask...>::words_num,0);
+        constexpr uint32_t significant_ops = std::min(_uint_view<N,N_significant,ViewsMask...>::words_num,
+                                            _uint_view<N,N_significant,ViewsMask...>::significant_words_num + _uint_view<M,M_significant,ViewsMaskOther...>::significant_words_num);
+
+        for(uint32_t i(0); i < _uint_view<N,N_significant,ViewsMask...>::significant_words_num; ++i)
         {
-            uint32_t lower_bound = i >= _uint_view<N>::words_num ? i-_uint_view<N>::words_num+1 : 0;
-            uint32_t upper_bound = std::min(i,_uint_view<N>::words_num-1);
-            for(uint32_t j(lower_bound); j <= upper_bound; ++j)
+            for(uint32_t j(0); j < std::min(_uint_view<M,M_significant,ViewsMaskOther...>::significant_words_num,_uint_view<N,N_significant,ViewsMask...>::words_num-i); ++j)
             {
-                uint32_t a_v = this->value[j];
-                uint32_t b_v = b.value[upper_bound-j+lower_bound];
-                pseudo_res[i] += a_v*b_v;
+                uint32_t a_v = this->at(i);
+                uint32_t b_v = other.at(j);
+                pseudo_res[i+j] += a_v*b_v;
             }
         }
         for(uint32_t i(1); i < significant_ops; ++i)
             pseudo_res[i] += pseudo_res[i-1] >> 16;
-        for(uint32_t i(0); i < _uint_view<N*2>::words_num; ++i)
-            this->value[i] = pseudo_res[i] & uint16_t(0xffff);
+        for(uint32_t i(0); i < _uint_view<N,N_significant,ViewsMask...>::words_num; ++i)
+            this->at(i) = pseudo_res[i] & uint16_t(0xffff);
         return *this;
     }
 
 
-    template<uint32_t N, uint32_t N_significant>
+    /*
+        Performs multiplication of 'this' and another template instance in-place using Karatsuba algorithm.
+    */
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
         requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
-    template<uint32_t M, uint32_t M_significant>
-    _uint_view<N,N_significant>& _uint_view<N,N_significant>::operator*=(const _uint_view<M,M_significant>& b) requires(N >= __globals::karatsuba_bound and N_significant == N)
+    template<uint32_t M, uint32_t M_significant, bool... ViewsMaskOther>
+    _uint_view<N,N_significant,ViewsMask...>& _uint_view<N,N_significant,ViewsMask...>::operator*=(const _uint_view<M,M_significant,ViewsMaskOther...>& other) requires(N >= __globals::karatsuba_bound and N_significant == N)
     {
         const _uint_view<N/2> a_lower_half(const_cast<_uint_view<N>::word_type*>(this->template get_part_view<2,0>()));
         const _uint_view<N/2> a_upper_half(const_cast<_uint_view<N>::word_type*>(this->template get_part_view<2,_uint_view<N>::words_num/2>()));
@@ -907,89 +1005,101 @@ namespace lrf
         return *this;
     }
 
-    template<uint32_t N, uint32_t N_significant>
+
+    /*
+        Performs addition of 'this' and another template instance.
+    */
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
         requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
-    template<uint32_t M, uint32_t M_significant>
-    _uint_add_out_t<N,N_significant,M,M_significant> _uint_view<N,N_significant>::operator+(const _uint_view<M,M_significant>& other) const
+    template<uint32_t M, uint32_t M_significant, bool... ViewsMaskOther>
+    _uint_add_out_t<N,N_significant,M,M_significant> _uint_view<N,N_significant,ViewsMask...>::operator+(const _uint_view<M,M_significant,ViewsMaskOther...>& other) const
     {
         _uint_add_out_t<N,N_significant,M,M_significant> res;
-        constexpr uint32_t significant_ops_min = std::min(_uint<N,N_significant>::significant_words_num,_uint<M,M_significant>::significant_words_num);
-        constexpr uint32_t significant_ops_max = std::max(_uint<N,N_significant>::significant_words_num,_uint<M,M_significant>::significant_words_num);
+        constexpr uint32_t significant_ops_min = std::min(_uint_view<N,N_significant,ViewsMask...>::significant_words_num,_uint_view<M,M_significant,ViewsMaskOther...>::significant_words_num);
+        constexpr uint32_t significant_ops_max = std::max(_uint_view<N,N_significant,ViewsMask...>::significant_words_num,_uint_view<M,M_significant,ViewsMaskOther...>::significant_words_num);
         uint16_t r = 0;
         for(uint32_t i = 0; i < significant_ops_min; ++i)
         {
-            uint32_t word_sum = (uint32_t)this->value[i] + (uint32_t)other.value[i] + (uint32_t)r;
-            res.value[i] = word_sum & uint16_t(0xffff);
-            r = word_sum >> _uint<N,N_significant>::word_bits;
+            uint32_t word_sum = (uint32_t)this->at(i) + (uint32_t)other.at(i) + (uint32_t)r;
+            res.at(i) = word_sum & uint16_t(0xffff);
+            r = word_sum >> _uint_view<N,N_significant,ViewsMask...>::word_bits;
         }
         for(uint32_t i = significant_ops_min; i < significant_ops_max; ++i)
         {
             uint32_t word_sum = r;
-            if constexpr(_uint<N,N_significant>::significant_words_num > significant_ops_min)
-                word_sum += (uint32_t)this->value[i];
+            if constexpr(_uint_view<N,N_significant,ViewsMask...>::significant_words_num > significant_ops_min)
+                word_sum += (uint32_t)this->at(i);
             else
-                word_sum += (uint32_t)other.value[i];
-            res.value[i] = word_sum & uint16_t(0xffff);
-            r = word_sum >> _uint<N,N_significant>::word_bits;
+                word_sum += (uint32_t)other.at(i);
+            res.at(i) = word_sum & uint16_t(0xffff);
+            r = word_sum >> _uint_view<N,N_significant,ViewsMask...>::word_bits;
         }
         if constexpr(significant_ops_max < _uint_add_out_t<N,N_significant,M,M_significant>::words_num)
         {
-            res.value[significant_ops_max] = r;
-            std::fill(res.value+significant_ops_max+1,res.value+_uint_add_out_t<N,N_significant,M,M_significant>::words_num,0);
+            res.at(significant_ops_max) = r;
+            for(uint32_t i(significant_ops_max+1); i < _uint_add_out_t<N,N_significant,M,M_significant>::words_num; ++i)
+                res.at(i) = 0;
         }
 
         return res;
     }
 
 
-    template<uint32_t N, uint32_t N_significant>
+    /*
+        Performs subtraction of 'this' and another template instance.
+    */
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
         requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
-    template<uint32_t M, uint32_t M_significant>
-    _uint_sub_out_t<N,N_significant,M,M_significant> _uint_view<N,N_significant>::operator-(const _uint_view<M,M_significant>& other) const
+    template<uint32_t M, uint32_t M_significant, bool... ViewsMaskOther>
+    _uint_sub_out_t<N,N_significant,M,M_significant> _uint_view<N,N_significant,ViewsMask...>::operator-(const _uint_view<M,M_significant,ViewsMaskOther...>& other) const
     {
         _uint_sub_out_t<N,N_significant,M,M_significant> res;
-        constexpr uint32_t significant_ops_min = std::min(_uint<N,N_significant>::significant_words_num,_uint<M,M_significant>::significant_words_num);
-        constexpr uint32_t significant_ops_max = std::max(_uint<N,N_significant>::significant_words_num,_uint<M,M_significant>::significant_words_num);
+        constexpr uint32_t significant_ops_min = std::min(_uint_view<N,N_significant,ViewsMask...>::significant_words_num,_uint_view<M,M_significant,ViewsMaskOther...>::significant_words_num);
+        constexpr uint32_t significant_ops_max = std::max(_uint_view<N,N_significant,ViewsMask...>::significant_words_num,_uint_view<M,M_significant,ViewsMaskOther...>::significant_words_num);
         uint16_t r = 0;
         for(uint32_t i(0); i < significant_ops_min; ++i)
         {
-            uint32_t sub_total = (uint32_t)other.value[i] + (uint32_t)r;
-            r = sub_total > this->value[i] ? 1 : 0;
-            res.value[i] = ((uint32_t)(r ? _uint_view<N,N_significant>::base : 0) - (uint32_t)sub_total) + (uint32_t)this->value[i];
+            uint32_t sub_total = (uint32_t)other.at(i) + (uint32_t)r;
+            r = sub_total > this->at(i) ? 1 : 0;
+            res.at(i) = ((uint32_t)(r ? _uint_view<N,N_significant,ViewsMask...>::base : 0) - (uint32_t)sub_total) + (uint32_t)this->at(i);
         }
         for(uint32_t i = significant_ops_min; i < significant_ops_max; ++i)
         {
             uint32_t sub_total = r;
-            if constexpr(_uint<M,M_significant>::significant_words_num > significant_ops_min)
-                sub_total += (uint32_t)other.value[i];
-            r = sub_total > this->value[i] ? 1 : 0;
-            uint32_t sub_val = ((uint32_t)(r ? _uint_view<N,N_significant>::base : 0) - (uint32_t)sub_total);
-            if constexpr(_uint<N,N_significant>::significant_words_num > significant_ops_min)
-                sub_val += (uint32_t)this->value[i];
-            res.value[i] = sub_val;
+            if constexpr(_uint_view<M,M_significant,ViewsMaskOther...>::significant_words_num > significant_ops_min)
+                sub_total += (uint32_t)other.at(i);
+            r = sub_total > this->at(i) ? 1 : 0;
+            uint32_t sub_val = ((uint32_t)(r ? _uint_view<N,N_significant,ViewsMask...>::base : 0) - (uint32_t)sub_total);
+            if constexpr(_uint_view<N,N_significant,ViewsMask...>::significant_words_num > significant_ops_min)
+                sub_val += (uint32_t)this->at(i);
+            res.at(i) = sub_val;
         }
-        std::fill(res.value+significant_ops_max,res.value+_uint_sub_out_t<N,N_significant,M,M_significant>::words_num,(uint32_t)0x10000-r);
+        for(uint32_t i(significant_ops_max); i < _uint_sub_out_t<N,N_significant,M,M_significant>::words_num; ++i)
+            res.at(i) = (uint32_t)0x10000-r;
 
         return res;
     }
 
 
-    template<uint32_t N, uint32_t N_significant>
+    /*
+        Performs multiplication of 'this' and another template instance using school-grade algorithm.
+    */
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
         requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
-    template<uint32_t M, uint32_t M_significant>
-    _uint_mul_out_t<N,N_significant,M,M_significant> _uint_view<N,N_significant>::operator*(const _uint_view<M,M_significant>& other) const requires (N < __globals::karatsuba_bound)
+    template<uint32_t M, uint32_t M_significant, bool... ViewsMaskOther>
+    _uint_mul_out_t<N,N_significant,M,M_significant> _uint_view<N,N_significant,ViewsMask...>::operator*(const _uint_view<M,M_significant,ViewsMaskOther...>& other) const requires (N < __globals::karatsuba_bound)
     {
         _uint_mul_out_t<N,N_significant,M,M_significant> res;
         uint64_t pseudo_res[_uint_mul_out_t<N,N_significant,M,M_significant>::words_num];
         constexpr uint32_t significant_ops = std::min(_uint_mul_out_t<N,N_significant,M,M_significant>::words_num,
-                                            _uint<N,N_significant>::significant_words_num+_uint<M,M_significant>::significant_words_num);
+                                            _uint_view<N,N_significant,ViewsMask...>::significant_words_num+_uint_view<M,M_significant,ViewsMaskOther...>::significant_words_num);
         std::fill(pseudo_res,pseudo_res+significant_ops,0ULL);
-        for(uint32_t i(0); i < _uint<N,N_significant>::significant_words_num; ++i)
+        for(uint32_t i(0); i < _uint_view<N,N_significant,ViewsMask...>::significant_words_num; ++i)
         {
-            for(uint32_t j(0); j < std::min(_uint<M,M_significant>::significant_words_num,_uint_mul_out_t<N,N_significant,M,M_significant>::words_num-i); ++j)
+            for(uint32_t j(0); j < std::min(_uint_view<M,M_significant,ViewsMaskOther...>::significant_words_num,_uint_mul_out_t<N,N_significant,M,M_significant>::words_num-i); ++j)
             {
-                uint32_t a_v = this->value[i];
-                uint32_t b_v = other.value[j];
+                uint32_t a_v = this->at(i);
+                uint32_t b_v = other.at(j);
                 pseudo_res[i+j] += a_v*b_v;
             }
         }
@@ -998,14 +1108,18 @@ namespace lrf
             pseudo_res[i] += pseudo_res[i-1] >> 16;
         for(uint32_t i(0); i < significant_ops; ++i)
             res.value[i] = pseudo_res[i] & uint16_t(0xffff);
+
         return res;
     }
 
 
-    template<uint32_t N, uint32_t N_significant>
+    /*
+        Performs multiplication of 'this' and another template instance using Karatsuba algorithm.
+    */
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
         requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
-    template<uint32_t M, uint32_t M_significant>
-    _uint_mul_out_t<N,N_significant,M,M_significant> _uint_view<N,N_significant>::operator*(const _uint_view<M,M_significant>& other) const requires (N >= __globals::karatsuba_bound)
+    template<uint32_t M, uint32_t M_significant, bool... ViewsMaskOther>
+    _uint_mul_out_t<N,N_significant,M,M_significant> _uint_view<N,N_significant,ViewsMask...>::operator*(const _uint_view<M,M_significant,ViewsMaskOther...>& other) const requires (N >= __globals::karatsuba_bound)
     {
         _uint<N*2> res(0);
         const _uint_view<N/2> a_lower_half(const_cast<_uint_view<N>::word_type*>(this->template get_part_view<2,0>()));
@@ -1032,20 +1146,20 @@ namespace lrf
     }
 
 
-    template<uint32_t N, uint32_t N_significant>
-    std::ostream& operator<<(std::ostream& out, const _uint_view<N,N_significant>& x)
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
+    std::ostream& operator<<(std::ostream& out, const _uint_view<N,N_significant,ViewsMask...>& x)
     {
         out << (std::string)x;
         return out;
     }
 
 
-    template<uint32_t N, uint32_t N_significant>
-    std::istream& operator>>(std::istream& in, _uint<N,N_significant>& x)
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
+    std::istream& operator>>(std::istream& in, _uint_view<N,N_significant,ViewsMask...>& x)
     {
         std::string hex_uint;
         in >> hex_uint;
-        x = _uint<N,N_significant>(hex_uint);
+        x = _uint_view<N,N_significant,ViewsMask...>(hex_uint);
 
         return in;
     }

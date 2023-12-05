@@ -110,6 +110,23 @@ namespace lrf
             static void check_and_init_remaining(_uint_view<N,N_significant,ViewsMask...>& origin) requires(N <= M);
         };
 
+        template<bool... AccViewsMask>
+        class views_accumulator
+        {
+        public:
+            template<bool View>
+            static auto accumulate_view();
+
+            template<uint32_t N_loc, uint32_t N_significant_loc>
+            static auto create_uint_instance();
+
+            template<uint32_t N_loc, uint32_t N_singificant_loc, uint16_t n_views, bool View>
+            static auto accumulate_n_views_and_create_uint();
+
+            template<uint32_t N_loc, uint32_t N_singificant_loc, uint16_t n_views, bool View>
+            static auto accumulate_n_views();
+        };
+
     protected:
         uint16_t& at(uint32_t i);
         const uint16_t& at(uint32_t i) const;
@@ -122,19 +139,35 @@ namespace lrf
         static constexpr bool any_view();
 
         _uint_view();
-    public:
+    private:
         uint16_t **value;
 
-        template<uint8_t part_i>
-        using _uint_part_view_t = _uint_view<_uint_view<N,N_significant,ViewsMask...>::parts_size_bits,_uint_view<N,N_significant,ViewsMask...>::significant_bits_in_part(part_i),true>;
+        template<uint16_t denominator>
+        constexpr uint16_t parts_num_in_sub_part();
 
-        template<uint8_t part_i>
-        using _uint_part_copy_t = _uint_view<_uint_view<N,N_significant,ViewsMask...>::parts_size_bits,_uint_view<N,N_significant,ViewsMask...>::significant_bits_in_part(part_i),false>;
+        template<uint16_t denominator>
+        constexpr uint16_t bits_num_in_sub_part();
 
-        template<uint32_t part_i>
-        _uint_part_view_t<part_i> get_part_view();
-        template<uint32_t part_i>
-        _uint_part_copy_t<part_i> get_part_view() const;
+        template<uint16_t numerator, uint16_t denominator>
+        constexpr uint16_t significant_bits_num_in_sub_part();
+
+        /*
+            Type alias which is equivalent to '_uint_view<N_loc,N_significant_loc,{View,...,View}>', where {View,...,View} consists of 'n_views' elements.
+        */
+        template<uint32_t N_loc, uint32_t N_significant_loc, uint16_t n_views, bool View>
+        using _uint_view_n_parts_t = std::invoke_result<decltype(views_accumulator<>::template accumulate_n_views_and_create_uint<N_loc,N_significant_loc,n_views,View>)>::type;
+    
+    public:
+        template<uint16_t numerator, uint16_t denominator>
+        using _uint_part_view_t = _uint_view_n_parts_t<bits_num_in_sub_part<denominator>(),significant_bits_num_in_sub_part<numerator,denominator>(),parts_num_in_sub_part<denominator>,true>;
+
+        template<uint16_t numerator, uint16_t denominator>
+        using _uint_part_copy_t = _uint_view_n_parts_t<bits_num_in_sub_part<denominator>(),significant_bits_num_in_sub_part<numerator,denominator>(),parts_num_in_sub_part<denominator>,false>;
+
+        template<uint16_t numerator, uint16_t denominator>
+        _uint_part_view_t<numerator,denominator> get_part_view();
+        template<uint16_t numerator, uint16_t denominator>
+        _uint_part_copy_t<numerator,denominator> get_part_view() const;
 
         template<typename... InitArgs>
         _uint_view(InitArgs... args);
@@ -762,21 +795,127 @@ namespace lrf
 
 
     /*
+        Function that accumulates the 'View' argument within the 'views_accumulator' instance, preserving previously accumulated views.
+        It appends the 'View' to the 'views_accumulator' and returns the updated accumulator.
+    */
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
+        requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
+    template<bool... AccViewsMask>
+    template<bool View>
+    auto _uint_view<N,N_significant,ViewsMask...>::views_accumulator<AccViewsMask...>::accumulate_view()
+    {
+        return views_accumulator<AccViewsMask...,View>();
+    }
+
+
+    /*
+        Creates a '_uint_view' considering the accumulated views (inside 'AccViewsMask...').
+        It generates a '_uint_view' instance based on the accumulated views accumulated inside.
+    */
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
+        requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
+    template<bool... AccViewsMask>
+    template<uint32_t N_loc, uint32_t N_significant_loc>
+    auto _uint_view<N,N_significant,ViewsMask...>::views_accumulator<AccViewsMask...>::create_uint_instance()
+    {
+        return _uint_view<N_loc,N_significant_loc,AccViewsMask...>();
+    }
+
+
+    /*
+        Accumulates 'n_views' views at once.
+    */
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
+        requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
+    template<bool... AccViewsMask>
+    template<uint32_t N_loc, uint32_t N_singificant_loc, uint16_t n_views, bool View>
+    auto _uint_view<N,N_significant,ViewsMask...>::views_accumulator<AccViewsMask...>::accumulate_n_views()
+    {
+        if constexpr(n_views)
+            return views_accumulator<AccViewsMask...,View>::template accumulate_n_views<N_loc,N_singificant_loc,n_views-1,View>();
+        return views_accumulator<AccViewsMask...>();
+    }
+
+
+    /*
+        Accumulates 'n_views' at once and return corresponding '_uint_view' instance.
+    */
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
+        requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
+    template<bool... AccViewsMask>
+    template<uint32_t N_loc, uint32_t N_singificant_loc, uint16_t n_views, bool View>
+    auto _uint_view<N,N_significant,ViewsMask...>::views_accumulator<AccViewsMask...>::accumulate_n_views_and_create_uint()
+    {
+        if constexpr(n_views)
+            return views_accumulator<AccViewsMask...,View>::template accumulate_n_views<N_loc,N_singificant_loc,n_views-1,View>();
+        return views_accumulator<AccViewsMask...>::create_uint_instance<N_loc,N_singificant_loc>();
+    }
+
+
+
+    /*
+        Returns the number of bits for a sub part based on the denominator.
+    */
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
+        requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
+    template<uint16_t denominator>
+    constexpr uint16_t _uint_view<N,N_significant,ViewsMask...>::bits_num_in_sub_part()
+    {
+        return N / denominator;
+    }
+
+
+    /*
+        Returns the significant bits within a sub part defined by the numerator and denominator.
+    */
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
+        requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
+    template<uint16_t numerator, uint16_t denominator>
+    constexpr uint16_t _uint_view<N,N_significant,ViewsMask...>::significant_bits_num_in_sub_part()
+    {
+        constexpr uint32_t bits_lower_offset = bits_num_in_sub_part<denominator>() * numerator;
+        constexpr uint32_t bits_upper_offset = bits_num_in_sub_part<denominator>() * (numerator+1) - 1;
+        if constexpr(N_significant <= bits_lower_offset)
+            return 0;
+        else if(N_significant > bits_upper_offset)
+            return bits_upper_offset - bits_lower_offset + 1;
+        else
+            return N_significant - bits_lower_offset + 1;
+    }
+
+
+    /*
+        Returns number of parts for sub part defined by the denominator.
+        All parts are of size of a power of 2. That is why for every denominator which is a power of 2, corresponding part would contain a subset of parts of the reference type.
+    */
+    template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
+        requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
+    template<uint16_t denominator>
+    constexpr uint16_t _uint_view<N,N_significant,ViewsMask...>::parts_num_in_sub_part()
+    {
+        return std::max(1,_uint_view<N,N_significant,ViewsMask...>::parts_num / denominator);
+    }
+
+
+
+    /*
         Returns actual view on a part of non-const instance, so one can edit actual part through acquired uint instance.
     */
     template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
         requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
-    template<uint32_t part_i>
-    _uint_view<N,N_significant,ViewsMask...>::_uint_part_view_t<part_i>
+    template<uint16_t numerator, uint16_t denominator>
+    _uint_view<N,N_significant,ViewsMask...>::_uint_part_view_t<numerator,denominator>
     _uint_view<N,N_significant,ViewsMask...>::get_part_view()
     {
-        constexpr uint8_t parts_total = sizeof...(ViewsMask);
-        static_assert(part_i < parts_total, "Part index out of range");
+        static_assert(numerator < denominator, "Numerator must be less than denominator.");
+        _uint_part_view_t<numerator,denominator> res;
 
-        constexpr uint32_t view_bits = _uint_view<N,N_significant,ViewsMask...>::parts_size_bits;
-        constexpr uint32_t view_significant_bits = _uint_view<N,N_significant,ViewsMask...>::significant_words_in_part(part_i);
+        constexpr uint16_t part_lower_word = bits_num_in_sub_part<denominator>() * numerator / _uint_view<N,N_significant,ViewsMask...>::word_bits;
 
-        return _uint_part_view_t<part_i>(std::pair<_uint_view<N,N_significant,ViewsMask...>,uint8_t>{*this,part_i});
+        for(uint16_t part_i(0); part_i < res.words_num; ++part_i)
+            res.value[part_i] = this->value[part_lower_word+part_i];
+        
+        return res;
     }
 
     /*
@@ -784,17 +923,19 @@ namespace lrf
     */
     template<uint32_t N, uint32_t N_significant, bool... ViewsMask>
         requires(N >= 16 and __globals::is_power_2(N) and N_significant <= N and N_significant % 16 == 0)
-    template<uint32_t part_i>
-    _uint_view<N,N_significant,ViewsMask...>::_uint_part_copy_t<part_i> 
+    template<uint16_t numerator, uint16_t denominator>
+    _uint_view<N,N_significant,ViewsMask...>::_uint_part_copy_t<numerator,denominator>
     _uint_view<N,N_significant,ViewsMask...>::get_part_view() const
     {
-        constexpr uint8_t parts_total = sizeof...(ViewsMask);
-        static_assert(part_i < parts_total, "Part index out of range");
+        static_assert(numerator < denominator, "Numerator must be less than denominator.");
+        _uint_part_copy_t<numerator,denominator> res;
 
-        constexpr uint32_t view_bits = _uint_view<N,N_significant,ViewsMask...>::parts_size_bits;
-        constexpr uint32_t view_significant_bits = _uint_view<N,N_significant,ViewsMask...>::significant_words_in_part(part_i);
+        constexpr uint16_t part_lower_word = bits_num_in_sub_part<denominator>() * numerator / _uint_view<N,N_significant,ViewsMask...>::word_bits;
 
-        return _uint_part_copy_t<part_i>(std::pair<_uint_view<N,N_significant,ViewsMask...>,uint8_t>{*this,part_i});
+        for(uint16_t part_i(0); part_i < res.words_num; ++part_i)
+            std::copy(this->value[part_lower_word+part_i],this->value[part_lower_word+part_i]+this->parts_size,res.value[part_i]);
+        
+        return res;
     }
 
 
